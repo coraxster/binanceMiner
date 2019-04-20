@@ -20,13 +20,17 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Info("clickhouse connected")
-	store, err := binanceScrubber.NewClickHouseStore(conn, 100)
+	store, err := binanceScrubber.NewClickHouseStore(conn, 10000)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = store.Migrate()
 	if err != nil {
 		log.Fatal(err)
 	}
 	booksCh := make(chan *binanceScrubber.Book)
 	go seed(booksCh, scrubber)
-	//go seed(booksCh, scrubber)
+	go seed(booksCh, scrubber)
 	log.Info("books seed started")
 
 	uniqueBooksCh := make(chan *binanceScrubber.Book)
