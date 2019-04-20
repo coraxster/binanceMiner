@@ -44,11 +44,15 @@ func (s *BinanceScrubber) SeedBooks(ctx context.Context, ch chan *Book) error {
 		errCh := make(chan error)
 		go func() {
 			errCh <- s.seed(seedCtx, ch, query)
+			close(errCh)
 		}()
 		select {
 		case err := <-errCh:
 			return err
 		case <-time.After(StreamTimelimit - 10*time.Minute):
+			go func() {
+				<-errCh
+			}()
 		}
 	}
 }
@@ -104,7 +108,7 @@ func (s *BinanceScrubber) seed(ctx context.Context, ch chan *Book, query string)
 		if err != nil {
 			return err
 		}
-		symbol := r.Stream[0:len(r.Stream)-len(StreamSuffix)]
+		symbol := r.Stream[0 : len(r.Stream)-len(StreamSuffix)]
 		ch <- &Book{symbol, r.Data.LastUpdateId, r.Data.Bids, r.Data.Asks}
 		select {
 		case <-ctx.Done():

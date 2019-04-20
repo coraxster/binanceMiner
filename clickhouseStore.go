@@ -40,7 +40,7 @@ func (chs *ClickHouseStore) Store(ch chan *Book) error {
 		if err != nil {
 			return err
 		}
-		buf = make([]*Book, 0, chs.chunkSize)
+		buf = buf[:0]
 	}
 	return nil
 }
