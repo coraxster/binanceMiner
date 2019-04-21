@@ -11,14 +11,11 @@ import (
 )
 
 var chDsn = flag.String("clickhouse-dsn", "tcp://localhost:9000?username=default&compress=true", "clickhouse dsn")
+var connN = flag.Int("binance-conn-n", 3, "binance connections number")
 
 func main() {
-	scrubber := binanceScrubber.NewBinanceScrubber()
-	symbols, err := scrubber.GetAllSymbols()
-	if err != nil {
-		log.Fatal(err)
-	}
-	conn, err := connectClickHouse()
+	flag.Parse()
+	conn, err := connectClickHouse(*chDsn)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -27,14 +24,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	if err = store.Migrate(); err != nil {
 		log.Fatal(err)
 	}
+	scrubber := binanceScrubber.NewBinanceScrubber()
 	booksCh := make(chan *binanceScrubber.Book)
-	go seed(booksCh, scrubber, symbols, 1)
-	go seed(booksCh, scrubber, symbols, 2)
-	go seed(booksCh, scrubber, symbols, 3)
+	if err = seed(booksCh, scrubber, *connN); err != nil {
+		log.Fatal(err)
+	}
 	log.Info("books seed started")
 
 	uniqueBooksCh := make(chan *binanceScrubber.Book)
@@ -46,8 +43,8 @@ func main() {
 	}
 }
 
-func connectClickHouse() (*sql.DB, error) {
-	conn, err := sql.Open("clickhouse", *chDsn)
+func connectClickHouse(dsn string) (*sql.DB, error) {
+	conn, err := sql.Open("clickhouse", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -57,12 +54,21 @@ func connectClickHouse() (*sql.DB, error) {
 	return conn, nil
 }
 
-func seed(ch chan *binanceScrubber.Book, scrubber *binanceScrubber.BinanceScrubber, symbols []string, workerId int) {
-	for {
-		err := scrubber.SeedBooks(ch, symbols)
-		log.Warn("w:", workerId, err)
-		time.Sleep(2 * time.Second)
+func seed(ch chan *binanceScrubber.Book, scrubber *binanceScrubber.BinanceScrubber, connN int) error {
+	symbols, err := scrubber.GetAllSymbols()
+	if err != nil {
+		return err
 	}
+	for n := 1; n <= connN; n++ {
+		go func(workerId int) {
+			for {
+				err := scrubber.SeedBooks(ch, symbols)
+				log.Warn("w:", workerId, err)
+				time.Sleep(2 * time.Second)
+			}
+		}(n)
+	}
+	return nil
 }
 
 // возможно лучше встроить в scrubber, но это неточно
