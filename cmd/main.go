@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -15,6 +14,10 @@ var chDsn = flag.String("clickhouse-dsn", "tcp://localhost:9000?username=default
 
 func main() {
 	scrubber := binanceScrubber.NewBinanceScrubber()
+	symbols, err := scrubber.GetAllSymbols()
+	if err != nil {
+		log.Fatal(err)
+	}
 	conn, err := connectClickHouse()
 	if err != nil {
 		log.Fatal(err)
@@ -24,13 +27,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = store.Migrate()
-	if err != nil {
+
+	if err = store.Migrate(); err != nil {
 		log.Fatal(err)
 	}
 	booksCh := make(chan *binanceScrubber.Book)
-	go seed(booksCh, scrubber)
-	go seed(booksCh, scrubber)
+	go seed(booksCh, scrubber, symbols, 1)
+	go seed(booksCh, scrubber, symbols, 2)
+	go seed(booksCh, scrubber, symbols, 3)
 	log.Info("books seed started")
 
 	uniqueBooksCh := make(chan *binanceScrubber.Book)
@@ -53,11 +57,10 @@ func connectClickHouse() (*sql.DB, error) {
 	return conn, nil
 }
 
-func seed(ch chan *binanceScrubber.Book, scrubber *binanceScrubber.BinanceScrubber) {
-	ctx := context.Background()
+func seed(ch chan *binanceScrubber.Book, scrubber *binanceScrubber.BinanceScrubber, symbols []string, workerId int) {
 	for {
-		err := scrubber.SeedBooks(ctx, ch)
-		log.Warn(err)
+		err := scrubber.SeedBooks(ch, symbols)
+		log.Warn("w:", workerId, err)
 		time.Sleep(2 * time.Second)
 	}
 }

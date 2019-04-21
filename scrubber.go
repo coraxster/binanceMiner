@@ -29,21 +29,16 @@ type Book struct {
 	Asks   [][2]float64
 }
 
-func (s *BinanceScrubber) SeedBooks(ctx context.Context, ch chan *Book) error {
-	symbols, err := s.getAllSymbols()
-
-	if err != nil {
-		return err
-	}
+func (s *BinanceScrubber) SeedBooks(ch chan *Book, symbols []string) error {
 	query := "streams="
 	for _, s := range symbols {
 		query = query + strings.ToLower(s) + StreamSuffix + "/"
 	}
 	for {
-		seedCtx, _ := context.WithTimeout(ctx, StreamTimelimit)
+		ctx, _ := context.WithTimeout(context.Background(), StreamTimelimit)
 		errCh := make(chan error)
 		go func() {
-			errCh <- s.seed(seedCtx, ch, query)
+			errCh <- s.seed(ctx, ch, query)
 			close(errCh)
 		}()
 		select {
@@ -122,7 +117,7 @@ type symbolInfo struct {
 	Symbol string
 }
 
-func (s *BinanceScrubber) getAllSymbols() ([]string, error) {
+func (s *BinanceScrubber) GetAllSymbols() ([]string, error) {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", BinanceSymbolsUrl, nil)
 	resp, err := client.Do(req)
