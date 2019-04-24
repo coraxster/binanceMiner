@@ -20,9 +20,13 @@ func (chs *ClickHouseStore) Migrate() error {
 		create table IF NOT EXISTS example_books (
     symbol String,
     secN   UInt64 CODEC(Delta, ZSTD(5)),
-    quote Nested
+    asks Nested
         (
-        isBid Int8,
+        price Float64,
+        quantity Float64
+        ) CODEC(Delta, ZSTD(5)),
+    bids Nested
+        (
         price Float64,
         quantity Float64
         ) CODEC(Delta, ZSTD(5))
@@ -31,7 +35,6 @@ func (chs *ClickHouseStore) Migrate() error {
 	return err
 }
 
-//todo: попробовать схему с хранением буков в массиве, сравнить место
 //todo: сделать fallback хранилище.
 func (chs *ClickHouseStore) Store(ch chan *Book) error {
 	buf := make([]*Book, 0, chs.chunkSize)
@@ -55,28 +58,38 @@ func (chs *ClickHouseStore) storeChunk(books []*Book) error {
 	if err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare("insert into example_books (symbol, secN, quote.isBid, quote.price, quote.quantity) values (?, ?, ?, ?, ?)")
+	stmt, err := tx.Prepare("insert into example_books_2 (symbol, secN, asks.price, asks.quantity, bids.price, bids.quantity) values (?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
+	askPrices := make([]float64, 0, len(books[0].Asks))
+	askQuantities := make([]float64, 0, len(books[0].Asks))
+	bidPrices := make([]float64, 0, len(books[0].Bids))
+	bidQuantities := make([]float64, 0, len(books[0].Bids))
 	for _, b := range books {
-		isBids := make([]int, 0, len(b.Bids)+len(b.Asks))
-		prices := make([]float64, 0, len(b.Bids)+len(b.Asks))
-		quantities := make([]float64, 0, len(b.Bids)+len(b.Asks))
-		for _, q := range b.Bids {
-			isBids = append(isBids, 1)
-			prices = append(prices, q[0])
-			quantities = append(quantities, q[1])
-		}
 		for _, q := range b.Asks {
-			isBids = append(isBids, 0)
-			prices = append(prices, q[0])
-			quantities = append(quantities, q[1])
+			askPrices = append(askPrices, q[0])
+			askQuantities = append(askQuantities, q[1])
 		}
-		_, err := stmt.Exec(b.Symbol, b.SecN, clickhouse.Array(isBids), clickhouse.Array(prices), clickhouse.Array(quantities))
+		for _, q := range b.Bids {
+			bidPrices = append(bidPrices, q[0])
+			bidQuantities = append(bidQuantities, q[1])
+		}
+		_, err := stmt.Exec(
+			b.Symbol,
+			b.SecN,
+			clickhouse.Array(askPrices),
+			clickhouse.Array(askQuantities),
+			clickhouse.Array(bidPrices),
+			clickhouse.Array(bidQuantities),
+		)
 		if err != nil {
 			return err
 		}
+		askPrices = askPrices[:0]
+		askQuantities = askQuantities[:0]
+		bidPrices = bidPrices[:0]
+		bidQuantities = bidQuantities[:0]
 	}
 	return tx.Commit()
 }
