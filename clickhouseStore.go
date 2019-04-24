@@ -28,6 +28,8 @@ func (chs *ClickHouseStore) Migrate() error {
 	return err
 }
 
+//todo: попробовать схему с хранением буков в массиве, сравнить место
+//todo: сделать fallback хранилище.
 func (chs *ClickHouseStore) Store(ch chan *Book) error {
 	buf := make([]*Book, 0, chs.chunkSize)
 	var err error

@@ -20,6 +20,7 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Info("clickhouse connected")
+
 	store, err := binanceScrubber.NewClickHouseStore(conn, 10000)
 	if err != nil {
 		log.Fatal(err)
@@ -59,14 +60,19 @@ func seed(ch chan *binanceScrubber.Book, scrubber *binanceScrubber.BinanceScrubb
 	if err != nil {
 		return err
 	}
-	for n := 1; n <= connN; n++ {
-		go func(workerId int) {
-			for {
-				err := scrubber.SeedBooks(ch, symbols)
-				log.Warn("w:", workerId, err)
-				time.Sleep(2 * time.Second)
+	worker := func(workerId int) {
+		for {
+			err := scrubber.SeedBooks(ch, symbols)
+			if alive := scrubber.AliveCount(); alive > 0 {
+				log.Warn("w:", workerId, ":", err, ". alive: ", alive, "/", connN)
+			} else {
+				log.Error("!!! w:", workerId, " ", err, ". alive: ", alive, "/", connN)
 			}
-		}(n)
+			time.Sleep(2 * time.Second)
+		}
+	}
+	for n := 1; n <= connN; n++ {
+		go worker(n)
 	}
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,7 +17,9 @@ const BinanceBooksHost = "stream.binance.com:9443"
 const StreamSuffix = "@depth10"
 const StreamTimelimit = 24 * time.Hour
 
-type BinanceScrubber struct{}
+type BinanceScrubber struct {
+	aliveCount int32
+}
 
 func NewBinanceScrubber() *BinanceScrubber {
 	return &BinanceScrubber{}
@@ -27,6 +30,10 @@ type Book struct {
 	SecN   int
 	Bids   [][2]float64
 	Asks   [][2]float64
+}
+
+func (s *BinanceScrubber) AliveCount() int {
+	return int(atomic.LoadInt32(&s.aliveCount))
 }
 
 func (s *BinanceScrubber) SeedBooks(ch chan *Book, symbols []string) error {
@@ -91,7 +98,9 @@ func (s *BinanceScrubber) seed(ctx context.Context, ch chan *Book, query string)
 	if err != nil {
 		return err
 	}
+	atomic.AddInt32(&s.aliveCount, 1)
 	defer c.Close()
+	defer atomic.AddInt32(&s.aliveCount, -1)
 
 	var r streamResponse
 	for {
