@@ -11,8 +11,8 @@ type ClickHouseStore struct {
 	chunkSize int
 }
 
-func NewClickHouseStore(conn *sql.DB, chunkSize int) (*ClickHouseStore, error) {
-	return &ClickHouseStore{conn, chunkSize}, nil
+func NewClickHouseStore(conn *sql.DB, chunkSize int) *ClickHouseStore {
+	return &ClickHouseStore{conn, chunkSize}
 }
 
 func (chs *ClickHouseStore) Migrate() error {

@@ -21,10 +21,7 @@ func main() {
 	}
 	log.Info("clickhouse connected")
 
-	store, err := binanceScrubber.NewClickHouseStore(conn, 10000)
-	if err != nil {
-		log.Fatal(err)
-	}
+	store := binanceScrubber.NewClickHouseStore(conn, 10000)
 	if err = store.Migrate(); err != nil {
 		log.Fatal(err)
 	}

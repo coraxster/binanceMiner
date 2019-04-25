@@ -15,7 +15,7 @@ import (
 const BinanceSymbolsUrl = "https://www.binance.com/api/v3/ticker/price"
 const BinanceBooksHost = "stream.binance.com:9443"
 const StreamSuffix = "@depth10"
-const StreamTimelimit = 24 * time.Hour
+const StreamTimelimit = 23 * time.Hour
 
 type BinanceScrubber struct {
 	aliveCount int32
