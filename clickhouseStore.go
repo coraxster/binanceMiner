@@ -17,8 +17,9 @@ func NewClickHouseStore(conn *sql.DB, chunkSize int) *ClickHouseStore {
 
 func (chs *ClickHouseStore) Migrate() error {
 	_, err := chs.conn.Exec(`
-		create table IF NOT EXISTS example_books (
-    symbol String,
+create table IF NOT EXISTS books (
+	time   DateTime CODEC(Delta, ZSTD(5)),
+    symbol String CODEC(Delta, ZSTD(5)),
     secN   UInt64 CODEC(Delta, ZSTD(5)),
     asks Nested
         (
@@ -58,7 +59,7 @@ func (chs *ClickHouseStore) storeChunk(books []*Book) error {
 	if err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare("insert into example_books_2 (symbol, secN, asks.price, asks.quantity, bids.price, bids.quantity) values (?, ?, ?, ?, ?, ?)")
+	stmt, err := tx.Prepare("insert into books (symbol, secN, asks.price, asks.quantity, bids.price, bids.quantity) values (?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -76,6 +77,8 @@ func (chs *ClickHouseStore) storeChunk(books []*Book) error {
 			bidQuantities = append(bidQuantities, q[1])
 		}
 		_, err := stmt.Exec(
+			b.Source,
+			clickhouse.DateTime(b.Time),
 			b.Symbol,
 			b.SecN,
 			clickhouse.Array(askPrices),

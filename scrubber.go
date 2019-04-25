@@ -26,6 +26,8 @@ func NewBinanceScrubber() *BinanceScrubber {
 }
 
 type Book struct {
+	Source string
+	Time   time.Time
 	Symbol string
 	SecN   int
 	Bids   [][2]float64
@@ -108,12 +110,13 @@ func (s *BinanceScrubber) seed(ctx context.Context, ch chan *Book, query string)
 		if err != nil {
 			return err
 		}
+		t := time.Now()
 		err = json.Unmarshal(message, &r)
 		if err != nil {
 			return err
 		}
 		symbol := r.Stream[0 : len(r.Stream)-len(StreamSuffix)]
-		ch <- &Book{symbol, r.Data.LastUpdateId, r.Data.Bids, r.Data.Asks}
+		ch <- &Book{"binance", t, symbol, r.Data.LastUpdateId, r.Data.Bids, r.Data.Asks}
 		select {
 		case <-ctx.Done():
 			return nil
