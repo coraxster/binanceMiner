@@ -4,17 +4,14 @@ import (
 	"database/sql"
 	"github.com/kshvakov/clickhouse"
 	_ "github.com/kshvakov/clickhouse"
-	"github.com/pkg/errors"
 )
 
 type ClickHouseStore struct {
-	conn      *sql.DB
-	chunkSize int
-	fbStore   *FallbackStore
+	conn *sql.DB
 }
 
-func NewClickHouseStore(conn *sql.DB, chunkSize int, fbStore *FallbackStore) *ClickHouseStore {
-	return &ClickHouseStore{conn, chunkSize, fbStore}
+func NewClickHouseStore(conn *sql.DB) *ClickHouseStore {
+	return &ClickHouseStore{conn}
 }
 
 func (chs *ClickHouseStore) Migrate() error {
@@ -39,30 +36,6 @@ create table IF NOT EXISTS books (
   ORDER BY (symbol, secN)
 	`)
 	return err
-}
-
-func (chs *ClickHouseStore) Receive(ch chan *Book) error {
-	handleErr := func(err error, books []*Book) error {
-		fbErr := chs.fbStore.Store(books)
-		if fbErr != nil {
-			return errors.Wrap(err, "fallback also failed :(")
-		}
-		return err
-	}
-	buf := make([]*Book, 0, chs.chunkSize)
-	var err error
-	for b := range ch {
-		buf = append(buf, b)
-		if len(buf) < cap(buf) {
-			continue
-		}
-		err = chs.Store(buf)
-		if err != nil {
-			return handleErr(err, buf)
-		}
-		buf = buf[:0]
-	}
-	return nil
 }
 
 func (chs *ClickHouseStore) Store(books []*Book) error {
@@ -106,24 +79,4 @@ func (chs *ClickHouseStore) Store(books []*Book) error {
 		bidQuantities = bidQuantities[:0]
 	}
 	return tx.Commit()
-}
-
-func (chs *ClickHouseStore) StoreFallback() error {
-	for {
-		key, books, err := chs.fbStore.Get()
-		if err != nil {
-			return err
-		}
-		if len(books) == 0 {
-			return nil
-		}
-		err = chs.Store(books)
-		if err != nil {
-			return err
-		}
-		err = chs.fbStore.Delete(key)
-		if err != nil {
-			return err
-		}
-	}
 }

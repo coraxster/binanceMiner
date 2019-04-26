@@ -7,6 +7,7 @@ import (
 	"github.com/coraxster/binanceScrubber"
 	"github.com/labstack/gommon/log"
 	"github.com/patrickmn/go-cache"
+	"github.com/pkg/errors"
 	"time"
 )
 
@@ -18,30 +19,36 @@ var processFallback = flag.Bool("process-fallback", false, "process fallback and
 func main() {
 	flag.Parse()
 	conn, err := connectClickHouse(*chDsn)
-	fatalOnErr(err)
+	fatalOnErr(err, "connectClickHouse failed")
 	log.Info("clickhouse connected")
 
+	chStore := binanceScrubber.NewClickHouseStore(conn)
+	fatalOnErr(err, "NewClickHouseStore failed")
+
 	fbStore, err := binanceScrubber.NewFallbackStore(*fallbackPath)
-	fatalOnErr(err)
-	chStore := binanceScrubber.NewClickHouseStore(conn, 10000, fbStore)
-	fatalOnErr(err)
+	fatalOnErr(err, "NewFallbackStore failed")
+
+	rec := binanceScrubber.NewReceiver(chStore, fbStore, 10000)
+
 	if *processFallback {
 		log.Info("process fallback starting")
-		err = chStore.StoreFallback()
-		fatalOnErr(err)
+		err = rec.ProcessFallback()
+		fatalOnErr(err, "ProcessFallback failed")
 		log.Info("process fallback done, exiting...")
 		return
 	}
+
 	scrubber := binanceScrubber.NewBinanceScrubber()
 	booksCh := make(chan *binanceScrubber.Book)
 	err = seed(booksCh, scrubber, *connN)
-	fatalOnErr(err)
+	fatalOnErr(err, "seed books failed")
 	log.Info("books seeder has been started")
 
 	uniqueBooksCh := make(chan *binanceScrubber.Book)
 	go unique(booksCh, uniqueBooksCh)
+
 	for {
-		err = chStore.Receive(uniqueBooksCh)
+		err = rec.Receive(uniqueBooksCh)
 		log.Warn(err)
 	}
 }
@@ -57,9 +64,9 @@ func connectClickHouse(dsn string) (*sql.DB, error) {
 	return conn, nil
 }
 
-func fatalOnErr(err error) {
+func fatalOnErr(err error, msg string) {
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(errors.Wrap(err, msg))
 	}
 }
 
