@@ -12,31 +12,36 @@ import (
 
 var chDsn = flag.String("clickhouse-dsn", "tcp://localhost:9000?username=default&compress=true", "clickhouse dsn")
 var connN = flag.Int("binance-conn-n", 3, "binance connections number")
+var fallbackPath = flag.String("fallback-path", "/tmp/binanceScrubber", "a place to store failed books")
+var processFallback = flag.Bool("process-fallback", false, "process fallback and exit")
 
 func main() {
 	flag.Parse()
 	conn, err := connectClickHouse(*chDsn)
-	if err != nil {
-		log.Fatal(err)
-	}
+	fatalOnErr(err)
 	log.Info("clickhouse connected")
 
-	store := binanceScrubber.NewClickHouseStore(conn, 10000)
-	if err = store.Migrate(); err != nil {
-		log.Fatal(err)
+	fbStore, err := binanceScrubber.NewFallbackStore(*fallbackPath)
+	fatalOnErr(err)
+	chStore := binanceScrubber.NewClickHouseStore(conn, 10000, fbStore)
+	fatalOnErr(err)
+	if *processFallback {
+		log.Info("process fallback starting")
+		err = chStore.StoreFallback()
+		fatalOnErr(err)
+		log.Info("process fallback done, exiting...")
+		return
 	}
 	scrubber := binanceScrubber.NewBinanceScrubber()
 	booksCh := make(chan *binanceScrubber.Book)
-	if err = seed(booksCh, scrubber, *connN); err != nil {
-		log.Fatal(err)
-	}
-	log.Info("books seed started")
+	err = seed(booksCh, scrubber, *connN)
+	fatalOnErr(err)
+	log.Info("books seeder has been started")
 
 	uniqueBooksCh := make(chan *binanceScrubber.Book)
 	go unique(booksCh, uniqueBooksCh)
-
 	for {
-		err = store.Store(uniqueBooksCh)
+		err = chStore.Receive(uniqueBooksCh)
 		log.Warn(err)
 	}
 }
@@ -50,6 +55,12 @@ func connectClickHouse(dsn string) (*sql.DB, error) {
 		return nil, err
 	}
 	return conn, nil
+}
+
+func fatalOnErr(err error) {
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func seed(ch chan *binanceScrubber.Book, scrubber *binanceScrubber.BinanceScrubber, connN int) error {

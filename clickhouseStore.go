@@ -4,23 +4,26 @@ import (
 	"database/sql"
 	"github.com/kshvakov/clickhouse"
 	_ "github.com/kshvakov/clickhouse"
+	"github.com/pkg/errors"
 )
 
 type ClickHouseStore struct {
 	conn      *sql.DB
 	chunkSize int
+	fbStore   *FallbackStore
 }
 
-func NewClickHouseStore(conn *sql.DB, chunkSize int) *ClickHouseStore {
-	return &ClickHouseStore{conn, chunkSize}
+func NewClickHouseStore(conn *sql.DB, chunkSize int, fbStore *FallbackStore) *ClickHouseStore {
+	return &ClickHouseStore{conn, chunkSize, fbStore}
 }
 
 func (chs *ClickHouseStore) Migrate() error {
 	_, err := chs.conn.Exec(`
 create table IF NOT EXISTS books (
-	time   DateTime CODEC(Delta, ZSTD(5)),
-    symbol String CODEC(Delta, ZSTD(5)),
+	source String CODEC(Delta, ZSTD(5)),
+	dt   DateTime CODEC(Delta, ZSTD(5)),
     secN   UInt64 CODEC(Delta, ZSTD(5)),
+    symbol String CODEC(Delta, ZSTD(5)),
     asks Nested
         (
         price Float64,
@@ -31,13 +34,21 @@ create table IF NOT EXISTS books (
         price Float64,
         quantity Float64
         ) CODEC(Delta, ZSTD(5))
-) engine = ReplacingMergeTree() ORDER BY (symbol, secN)
+) engine = ReplacingMergeTree() 
+  PARTITION BY (source, toYYYYMM(dt))
+  ORDER BY (symbol, secN)
 	`)
 	return err
 }
 
-//todo: сделать fallback хранилище.
-func (chs *ClickHouseStore) Store(ch chan *Book) error {
+func (chs *ClickHouseStore) Receive(ch chan *Book) error {
+	handleErr := func(err error, books []*Book) error {
+		fbErr := chs.fbStore.Store(books)
+		if fbErr != nil {
+			return errors.Wrap(err, "fallback also failed :(")
+		}
+		return err
+	}
 	buf := make([]*Book, 0, chs.chunkSize)
 	var err error
 	for b := range ch {
@@ -45,21 +56,21 @@ func (chs *ClickHouseStore) Store(ch chan *Book) error {
 		if len(buf) < cap(buf) {
 			continue
 		}
-		err = chs.storeChunk(buf)
+		err = chs.Store(buf)
 		if err != nil {
-			return err
+			return handleErr(err, buf)
 		}
 		buf = buf[:0]
 	}
 	return nil
 }
 
-func (chs *ClickHouseStore) storeChunk(books []*Book) error {
+func (chs *ClickHouseStore) Store(books []*Book) error {
 	tx, err := chs.conn.Begin()
 	if err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare("insert into books (symbol, secN, asks.price, asks.quantity, bids.price, bids.quantity) values (?, ?, ?, ?, ?, ?)")
+	stmt, err := tx.Prepare("insert into books (source, dt, secN, symbol, asks.price, asks.quantity, bids.price, bids.quantity) values (?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -79,8 +90,8 @@ func (chs *ClickHouseStore) storeChunk(books []*Book) error {
 		_, err := stmt.Exec(
 			b.Source,
 			clickhouse.DateTime(b.Time),
-			b.Symbol,
 			b.SecN,
+			b.Symbol,
 			clickhouse.Array(askPrices),
 			clickhouse.Array(askQuantities),
 			clickhouse.Array(bidPrices),
@@ -95,4 +106,24 @@ func (chs *ClickHouseStore) storeChunk(books []*Book) error {
 		bidQuantities = bidQuantities[:0]
 	}
 	return tx.Commit()
+}
+
+func (chs *ClickHouseStore) StoreFallback() error {
+	for {
+		key, books, err := chs.fbStore.Get()
+		if err != nil {
+			return err
+		}
+		if len(books) == 0 {
+			return nil
+		}
+		err = chs.Store(books)
+		if err != nil {
+			return err
+		}
+		err = chs.fbStore.Delete(key)
+		if err != nil {
+			return err
+		}
+	}
 }
