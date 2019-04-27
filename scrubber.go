@@ -1,4 +1,4 @@
-package binanceScrubber
+package main
 
 import (
 	"context"

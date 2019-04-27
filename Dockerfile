@@ -1,9 +1,9 @@
 FROM golang:1.12.4-alpine3.9 AS builder
 RUN apk add git
 ADD . /go/src/github.com/coraxster/binanceScrubber
-WORKDIR /go/src/github.com/coraxster/binanceScrubber/cmd
+WORKDIR /go/src/github.com/coraxster/binanceScrubber
 RUN go get ./...
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o /app main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o /app .
 
 FROM scratch
 COPY --from=builder /app ./

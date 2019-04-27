@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
-	"github.com/coraxster/binanceScrubber"
 	"github.com/labstack/gommon/log"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
@@ -22,13 +21,13 @@ func main() {
 	fatalOnErr(err, "connectClickHouse failed")
 	log.Info("clickhouse connected")
 
-	chStore := binanceScrubber.NewClickHouseStore(conn)
+	chStore := NewClickHouseStore(conn)
 	fatalOnErr(err, "NewClickHouseStore failed")
 
-	fbStore, err := binanceScrubber.NewLocalStore(*fallbackPath)
+	fbStore, err := NewLocalStore(*fallbackPath)
 	fatalOnErr(err, "NewLocalStore failed")
 
-	rec := binanceScrubber.NewReceiver(chStore, fbStore, 10000)
+	rec := NewReceiver(chStore, fbStore, 10000)
 
 	if *processFallback {
 		log.Info("process fallback starting")
@@ -38,13 +37,13 @@ func main() {
 		return
 	}
 
-	scrubber := binanceScrubber.NewBinanceScrubber()
-	booksCh := make(chan *binanceScrubber.Book)
+	scrubber := NewBinanceScrubber()
+	booksCh := make(chan *Book)
 	err = seed(booksCh, scrubber, *connN)
 	fatalOnErr(err, "seed books failed")
 	log.Info("books seeder has been started")
 
-	uniqueBooksCh := make(chan *binanceScrubber.Book, 10000)
+	uniqueBooksCh := make(chan *Book, 10000)
 	go unique(uniqueBooksCh, booksCh)
 
 	for {
@@ -70,7 +69,7 @@ func fatalOnErr(err error, msg string) {
 	}
 }
 
-func seed(ch chan *binanceScrubber.Book, scrubber *binanceScrubber.BinanceScrubber, connN int) error {
+func seed(ch chan *Book, scrubber *BinanceScrubber, connN int) error {
 	symbols, err := scrubber.GetAllSymbols()
 	if err != nil {
 		return err
@@ -93,7 +92,7 @@ func seed(ch chan *binanceScrubber.Book, scrubber *binanceScrubber.BinanceScrubb
 }
 
 // возможно лучше встроить в scrubber, но это неточно
-func unique(out chan *binanceScrubber.Book, in chan *binanceScrubber.Book) {
+func unique(out chan *Book, in chan *Book) {
 	c := cache.New(10*time.Minute, 20*time.Minute)
 	for b := range in {
 		key := fmt.Sprint(b.Symbol, b.SecN)
