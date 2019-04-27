@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"github.com/kshvakov/clickhouse"
-	_ "github.com/kshvakov/clickhouse"
 )
 
 type ClickHouseStore struct {
