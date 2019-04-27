@@ -14,7 +14,7 @@ type LocalStore struct {
 	path string
 }
 
-func NewFallbackStore(path string) (*LocalStore, error) {
+func NewLocalStore(path string) (*LocalStore, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		err = os.MkdirAll(path, os.ModePerm)
 		if err != nil {

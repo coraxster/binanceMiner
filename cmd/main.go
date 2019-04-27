@@ -25,8 +25,8 @@ func main() {
 	chStore := binanceScrubber.NewClickHouseStore(conn)
 	fatalOnErr(err, "NewClickHouseStore failed")
 
-	fbStore, err := binanceScrubber.NewFallbackStore(*fallbackPath)
-	fatalOnErr(err, "NewFallbackStore failed")
+	fbStore, err := binanceScrubber.NewLocalStore(*fallbackPath)
+	fatalOnErr(err, "NewLocalStore failed")
 
 	rec := binanceScrubber.NewReceiver(chStore, fbStore, 10000)
 
@@ -44,8 +44,8 @@ func main() {
 	fatalOnErr(err, "seed books failed")
 	log.Info("books seeder has been started")
 
-	uniqueBooksCh := make(chan *binanceScrubber.Book)
-	go unique(booksCh, uniqueBooksCh)
+	uniqueBooksCh := make(chan *binanceScrubber.Book, 10000)
+	go unique(uniqueBooksCh, booksCh)
 
 	for {
 		err = rec.Receive(uniqueBooksCh)
@@ -93,7 +93,7 @@ func seed(ch chan *binanceScrubber.Book, scrubber *binanceScrubber.BinanceScrubb
 }
 
 // возможно лучше встроить в scrubber, но это неточно
-func unique(in chan *binanceScrubber.Book, out chan *binanceScrubber.Book) {
+func unique(out chan *binanceScrubber.Book, in chan *binanceScrubber.Book) {
 	c := cache.New(10*time.Minute, 20*time.Minute)
 	for b := range in {
 		key := fmt.Sprint(b.Symbol, b.SecN)
