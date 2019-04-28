@@ -11,7 +11,7 @@ import (
 )
 
 var chDsn = flag.String("clickhouse-dsn", "tcp://localhost:9000?username=default&compress=true", "clickhouse dsn")
-var connN = flag.Int("binance-conn-n", 3, "binance connections number")
+var connN = flag.Int("binance-conn-n", 2, "binance connections number")
 var fallbackPath = flag.String("fallback-path", "/tmp/binanceScrubber", "a place to store failed books")
 var processFallback = flag.Bool("process-fallback", false, "process fallback and exit")
 
@@ -23,6 +23,7 @@ func main() {
 
 	chStore := NewClickHouseStore(conn)
 	fatalOnErr(err, "NewClickHouseStore failed")
+	fatalOnErr(chStore.Migrate(), "ClickHouseStore failed")
 
 	fbStore, err := NewLocalStore(*fallbackPath)
 	fatalOnErr(err, "NewLocalStore failed")
