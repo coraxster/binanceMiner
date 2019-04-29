@@ -1,6 +1,9 @@
 package main
 
-import "github.com/pkg/errors"
+import (
+	"github.com/pkg/errors"
+	"time"
+)
 
 type Store interface {
 	Store([]*Book) error
@@ -48,7 +51,7 @@ func (rec *Receiver) Store(books []*Book) error {
 	return err
 }
 
-func (rec *Receiver) ProcessFallback() error {
+func (rec *Receiver) ProcessFallback(sleep time.Duration) error {
 	for {
 		key, books, err := rec.fbStore.Get()
 		if err != nil {
@@ -65,5 +68,6 @@ func (rec *Receiver) ProcessFallback() error {
 		if err != nil {
 			return err
 		}
+		time.Sleep(sleep)
 	}
 }

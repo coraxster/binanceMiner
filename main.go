@@ -14,6 +14,7 @@ var chDsn = flag.String("clickhouse-dsn", "tcp://localhost:9000?username=default
 var connN = flag.Int("binance-conn-n", 2, "binance connections number")
 var fallbackPath = flag.String("fallback-path", "/tmp/binanceScrubber", "a place to store failed books")
 var processFallback = flag.Bool("process-fallback", false, "process fallback and exit")
+var processFallbackSleep = flag.Int("process-fallback-sleep", 10, "process fallback sleep between chunks")
 
 func main() {
 	flag.Parse()
@@ -32,7 +33,7 @@ func main() {
 
 	if *processFallback {
 		log.Info("process fallback starting")
-		err = rec.ProcessFallback()
+		err = rec.ProcessFallback(time.Duration(*processFallbackSleep) * time.Second)
 		fatalOnErr(err, "ProcessFallback failed")
 		log.Info("process fallback done, exiting...")
 		return
