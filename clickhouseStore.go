@@ -31,7 +31,7 @@ create table IF NOT EXISTS books (
         quantity Float64
         ) CODEC(Delta, ZSTD(5))
 ) engine = ReplacingMergeTree() 
-  PARTITION BY (source, toYYYYMM(dt))
+  PARTITION BY (toYYYYMMDD(dt), source, toYYYYMM(dt))
   ORDER BY (symbol, secN)
 	`)
 	return err
