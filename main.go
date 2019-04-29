@@ -46,7 +46,7 @@ func main() {
 	fatalOnErr(err, "seed books failed")
 	log.Info("books seeder has been started")
 
-	uniqueBooksCh := make(chan *Book, 10000)
+	uniqueBooksCh := make(chan *Book, 30000) // about 30000 books/min in. clickhouse write timeout = 1 min
 	go unique(uniqueBooksCh, booksCh)
 
 	for {
