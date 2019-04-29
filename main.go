@@ -12,6 +12,7 @@ import (
 
 var chDsn = flag.String("clickhouse-dsn", "tcp://localhost:9000?username=default&compress=true", "clickhouse dsn")
 var connN = flag.Int("binance-conn-n", 2, "binance connections number")
+var chunkSize = flag.Int("chunk-size", 100000, "collect chunk-size then push to clickhouse, 100000 - about 30mb")
 var fallbackPath = flag.String("fallback-path", "/tmp/binanceScrubber", "a place to store failed books")
 var processFallback = flag.Bool("process-fallback", false, "process fallback and exit")
 var processFallbackSleep = flag.Int("process-fallback-sleep", 10, "process fallback sleep between chunks")
@@ -29,7 +30,7 @@ func main() {
 	fbStore, err := NewLocalStore(*fallbackPath)
 	fatalOnErr(err, "NewLocalStore failed")
 
-	rec := NewReceiver(chStore, fbStore, 10000)
+	rec := NewReceiver(chStore, fbStore, *chunkSize)
 
 	if *processFallback {
 		log.Info("process fallback starting")
