@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
 	"github.com/kshvakov/clickhouse"
 	"sort"
 )
@@ -83,19 +82,39 @@ func (chs *ClickHouseStore) Store(books []*Book) error {
 	return tx.Commit()
 }
 
+// according clickhouse key "20060102absxyz123123"
 func sortBooks(books []*Book) {
 	sort.Slice(books, func(i, j int) bool {
-		return getSortKey(books[i]) < getSortKey(books[j])
-	})
-}
+		iY, iM, iD := books[i].Time.Date()
+		jY, jM, jD := books[j].Time.Date()
+		if iY < jY {
+			return true
+		}
+		if iY > jY {
+			return false
+		}
 
-func getSortKey(book *Book) string {
-	return fmt.Sprintf(
-		"%d%02d%02d%s%d", // 20060102absxyz123123
-		book.Time.Year(),
-		book.Time.Month(),
-		book.Time.Day(),
-		book.Symbol,
-		book.SecN,
-	)
+		if iM < jM {
+			return true
+		}
+		if iM > jM {
+			return false
+		}
+
+		if iD < jD {
+			return true
+		}
+		if iD > jD {
+			return false
+		}
+
+		if books[i].Symbol < books[j].Symbol {
+			return true
+		}
+		if books[i].Symbol > books[j].Symbol {
+			return false
+		}
+
+		return books[i].SecN < books[j].SecN
+	})
 }
