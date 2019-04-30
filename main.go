@@ -14,8 +14,7 @@ var chDsn = flag.String("clickhouse-dsn", "tcp://localhost:9000?username=default
 var connN = flag.Int("binance-conn-n", 2, "binance connections number")
 var chunkSize = flag.Int("chunk-size", 100000, "collect chunk-size then push to clickhouse, 100000 - about 30mb")
 var fallbackPath = flag.String("fallback-path", "/tmp/binanceScrubber", "a place to store failed books")
-var processFallback = flag.Bool("process-fallback", false, "process fallback and exit")
-var processFallbackSleep = flag.Int("process-fallback-sleep", 10, "process fallback sleep between chunks")
+var processFallbackSleep = flag.Int("process-fallback-sleep", 30, "process fallback sleep between chunks")
 
 func main() {
 	flag.Parse()
@@ -32,14 +31,6 @@ func main() {
 
 	rec := NewReceiver(chStore, fbStore, *chunkSize)
 
-	if *processFallback {
-		log.Info("process fallback starting")
-		err = rec.ProcessFallback(time.Duration(*processFallbackSleep) * time.Second)
-		fatalOnErr(err, "ProcessFallback failed")
-		log.Info("process fallback done, exiting...")
-		return
-	}
-
 	scrubber := NewBinanceScrubber()
 	booksCh := make(chan *Book)
 	err = seed(booksCh, scrubber, *connN)
@@ -49,9 +40,16 @@ func main() {
 	uniqueBooksCh := make(chan *Book, 30000) // about 30000 books/min in. clickhouse write timeout = 1 min
 	go unique(uniqueBooksCh, booksCh)
 
+	go func() {
+		for {
+			err = rec.Receive(uniqueBooksCh)
+			log.Warn("receive error: " + err.Error())
+		}
+	}()
+
 	for {
-		err = rec.Receive(uniqueBooksCh)
-		log.Warn(err)
+		err = rec.ProcessFallback(time.Duration(*processFallbackSleep) * time.Second)
+		log.Warn("processFallback error: " + err.Error())
 	}
 }
 

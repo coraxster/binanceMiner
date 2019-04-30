@@ -53,12 +53,13 @@ func (rec *Receiver) Store(books []*Book) error {
 
 func (rec *Receiver) ProcessFallback(sleep time.Duration) error {
 	for {
+		time.Sleep(sleep)
 		key, books, err := rec.fbStore.Get()
 		if err != nil {
 			return err
 		}
 		if len(books) == 0 {
-			return nil
+			continue
 		}
 		err = rec.mainStore.Store(books)
 		if err != nil {
@@ -68,6 +69,5 @@ func (rec *Receiver) ProcessFallback(sleep time.Duration) error {
 		if err != nil {
 			return err
 		}
-		time.Sleep(sleep)
 	}
 }
