@@ -2,7 +2,9 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"github.com/kshvakov/clickhouse"
+	"sort"
 )
 
 type ClickHouseStore struct {
@@ -38,6 +40,7 @@ create table IF NOT EXISTS books (
 }
 
 func (chs *ClickHouseStore) Store(books []*Book) error {
+	sortBooks(books) // sort here to reduce clickhouse load
 	tx, err := chs.conn.Begin()
 	if err != nil {
 		return err
@@ -78,4 +81,21 @@ func (chs *ClickHouseStore) Store(books []*Book) error {
 		bidQuantities = bidQuantities[:0]
 	}
 	return tx.Commit()
+}
+
+func sortBooks(books []*Book) {
+	sort.Slice(books, func(i, j int) bool {
+		return getSortKey(books[i]) < getSortKey(books[j])
+	})
+}
+
+func getSortKey(book *Book) string {
+	return fmt.Sprintf(
+		"%d%02d%02d%s%d", // 20060102absxyz123123
+		book.Time.Year(),
+		book.Time.Month(),
+		book.Time.Day(),
+		book.Symbol,
+		book.SecN,
+	)
 }
