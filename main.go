@@ -26,7 +26,7 @@ func main() {
 	fbStore, err := clickhouseStore.NewLocalStore(*fallbackPath, time.Duration(*keepOkDays)*24*time.Hour)
 	fatalOnErr(err, "NewLocalStore failed")
 
-	rec := NewReceiver(chStore, fbStore, *chunkSize)
+	rec := clickhouseStore.NewReceiver(chStore, fbStore, *chunkSize)
 
 	booksCh := make(chan *Book)
 	seed(booksCh)
@@ -35,7 +35,7 @@ func main() {
 	uniqueBooksCh := unique(booksCh)
 	go func() {
 		for {
-			err := rec.Receive(uniqueBooksCh)
+			err := rec.Receive(convert(uniqueBooksCh))
 			log.Warn("receive error: " + err.Error())
 		}
 	}()
@@ -83,6 +83,40 @@ func unique(in chan *Book) chan *Book {
 			}
 			c.Set(key, struct{}{}, cache.DefaultExpiration)
 			out <- b
+		}
+	}()
+	return out
+}
+
+func convert(in chan *Book) chan *clickhouseStore.Book {
+	out := make(chan *clickhouseStore.Book)
+	convertFunc := func(book *Book) *clickhouseStore.Book {
+		askPrices := make([]float64, 0, len(book.Asks))
+		askQuantities := make([]float64, 0, len(book.Asks))
+		bidPrices := make([]float64, 0, len(book.Bids))
+		bidQuantities := make([]float64, 0, len(book.Bids))
+		for _, q := range book.Asks {
+			askPrices = append(askPrices, q[0])
+			askQuantities = append(askQuantities, q[1])
+		}
+		for _, q := range book.Bids {
+			bidPrices = append(bidPrices, q[0])
+			bidQuantities = append(bidQuantities, q[1])
+		}
+		return &clickhouseStore.Book{
+			Source:        book.Source,
+			Time:          book.Time,
+			Symbol:        book.Symbol,
+			SecN:          book.SecN,
+			BidPrices:     bidPrices,
+			AskPrices:     askPrices,
+			BidQuantities: bidQuantities,
+			AskQuantities: askQuantities,
+		}
+	}
+	go func() {
+		for b := range in {
+			out <- convertFunc(b)
 		}
 	}()
 	return out

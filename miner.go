@@ -30,8 +30,8 @@ type Book struct {
 	Time   time.Time
 	Symbol string
 	SecN   int
-	Bids   [][2]float64
-	Asks   [][2]float64
+	Bids   [][2]float64 // price, quantity
+	Asks   [][2]float64 // price, quantity
 }
 
 func (s *BinanceMiner) AliveCount() int {
