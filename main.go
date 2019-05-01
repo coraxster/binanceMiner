@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/coraxster/binanceScrubber/clickhouseStore"
 	"github.com/labstack/gommon/log"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
@@ -18,11 +19,11 @@ var processFallbackSleep = flag.Int("process-fallback-sleep", 30, "process fallb
 func main() {
 	flag.Parse()
 
-	chStore, err := NewClickHouseStore(*chDsn)
+	chStore, err := clickhouseStore.NewClickHouseStore(*chDsn)
 	fatalOnErr(err, "NewClickHouseStore failed")
 	fatalOnErr(chStore.Migrate(), "ClickHouseStore migrate failed")
 
-	fbStore, err := NewLocalStore(*fallbackPath)
+	fbStore, err := clickhouseStore.NewLocalStore(*fallbackPath)
 	fatalOnErr(err, "NewLocalStore failed")
 
 	rec := NewReceiver(chStore, fbStore, *chunkSize)
@@ -31,9 +32,10 @@ func main() {
 	fatalOnErr(seed(booksCh), "seed books failed")
 	log.Info("books seeder has been started")
 
+	uniqueCh := unique(booksCh)
 	go func() {
 		for {
-			err = rec.Receive(unique(booksCh))
+			err = rec.Receive(uniqueCh)
 			log.Warn("receive error: " + err.Error())
 		}
 	}()
@@ -60,9 +62,9 @@ func seed(ch chan *Book) error {
 		for {
 			err := scrubber.SeedBooks(ch, symbols)
 			if alive := scrubber.AliveCount(); alive > 0 {
-				log.Warn("w:", workerId, ":", err, ". alive: ", alive, "/", connN)
+				log.Warn("w:", workerId, ":", err, ". alive: ", alive, "/", *connN)
 			} else {
-				log.Error("!!! w:", workerId, " ", err, ". alive: ", alive, "/", connN)
+				log.Error("!!! w:", workerId, " ", err, ". alive: ", alive, "/", *connN)
 			}
 			time.Sleep(2 * time.Second)
 		}
