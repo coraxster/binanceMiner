@@ -17,12 +17,12 @@ const BinanceBooksHost = "stream.binance.com:9443"
 const StreamSuffix = "@depth10"
 const StreamTimelimit = 23 * time.Hour
 
-type BinanceScrubber struct {
+type BinanceMiner struct {
 	aliveCount int32
 }
 
-func NewBinanceScrubber() *BinanceScrubber {
-	return &BinanceScrubber{}
+func NewBinanceMiner() *BinanceMiner {
+	return &BinanceMiner{}
 }
 
 type Book struct {
@@ -34,11 +34,11 @@ type Book struct {
 	Asks   [][2]float64
 }
 
-func (s *BinanceScrubber) AliveCount() int {
+func (s *BinanceMiner) AliveCount() int {
 	return int(atomic.LoadInt32(&s.aliveCount))
 }
 
-func (s *BinanceScrubber) SeedBooks(ch chan *Book, symbols []string) error {
+func (s *BinanceMiner) SeedBooks(ch chan *Book, symbols []string) error {
 	query := "streams="
 	for _, s := range symbols {
 		query = query + strings.ToLower(s) + StreamSuffix + "/"
@@ -94,7 +94,7 @@ func (c *streamQuotes) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func (s *BinanceScrubber) seed(ctx context.Context, ch chan *Book, query string) error {
+func (s *BinanceMiner) seed(ctx context.Context, ch chan *Book, query string) error {
 	u := url.URL{Scheme: "wss", Host: BinanceBooksHost, Path: "/stream", RawQuery: query}
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
@@ -129,7 +129,7 @@ type symbolInfo struct {
 	Symbol string
 }
 
-func (s *BinanceScrubber) GetAllSymbols() ([]string, error) {
+func (s *BinanceMiner) GetAllSymbols() ([]string, error) {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", BinanceSymbolsUrl, nil)
 	resp, err := client.Do(req)

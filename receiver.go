@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/coraxster/binanceScrubber/clickhouseStore"
+	"github.com/coraxster/binanceMiner/clickhouseStore"
 	"github.com/pkg/errors"
 	"time"
 )

@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/coraxster/binanceScrubber/clickhouseStore"
+	"github.com/coraxster/binanceMiner/clickhouseStore"
 	"github.com/labstack/gommon/log"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
@@ -23,7 +23,7 @@ func main() {
 	fatalOnErr(err, "NewClickHouseStore failed")
 	fatalOnErr(chStore.Migrate(), "ClickHouseStore migrate failed")
 
-	fbStore, err := clickhouseStore.NewLocalStore(*fallbackPath, time.Duration(*keepOk)*24*time.Hour)
+	fbStore, err := clickhouseStore.NewLocalStore(*fallbackPath, time.Duration(*keepOkDays)*24*time.Hour)
 	fatalOnErr(err, "NewLocalStore failed")
 
 	rec := NewReceiver(chStore, fbStore, *chunkSize)
@@ -32,10 +32,10 @@ func main() {
 	seed(booksCh)
 	log.Info("books seeder has been started")
 
-	uniqueCh := unique(booksCh)
+	uniqueBooksCh := unique(booksCh)
 	go func() {
 		for {
-			err := rec.Receive(uniqueCh)
+			err := rec.Receive(uniqueBooksCh)
 			log.Warn("receive error: " + err.Error())
 		}
 	}()
@@ -53,13 +53,13 @@ func fatalOnErr(err error, msg string) {
 }
 
 func seed(ch chan *Book) {
-	scrubber := NewBinanceScrubber()
-	symbols, err := scrubber.GetAllSymbols()
+	miner := NewBinanceMiner()
+	symbols, err := miner.GetAllSymbols()
 	fatalOnErr(err, "get symbols failed")
 	worker := func(workerId int) {
 		for {
-			err := scrubber.SeedBooks(ch, symbols)
-			if alive := scrubber.AliveCount(); alive > 0 {
+			err := miner.SeedBooks(ch, symbols)
+			if alive := miner.AliveCount(); alive > 0 {
 				log.Warn("w:", workerId, ":", err, ". alive: ", alive, "/", *connN)
 			} else {
 				log.Error("!!! w:", workerId, " ", err, ". alive: ", alive, "/", *connN)
