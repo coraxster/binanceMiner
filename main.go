@@ -13,8 +13,8 @@ import (
 var chDsn = flag.String("clickhouse-dsn", "tcp://localhost:9000?username=default&compress=true", "clickhouse dsn")
 var connN = flag.Int("binance-conn-n", 2, "binance connections number")
 var chunkSize = flag.Int("chunk-size", 100000, "collect chunk-size then push to clickhouse, 100000 - about 30mb")
-var fallbackPath = flag.String("fallback-path", "/tmp/binanceScrubber", "a place to store failed books")
-var processFallbackSleep = flag.Int("process-fallback-sleep", 30, "process fallback sleep between chunks")
+var fallbackPath = flag.String("fallback-path", "/tmp/binanceMiner/", "a place to store failed books")
+var keepOkDays = flag.Int("keep-ok", 7, "how long keep sent books(days)")
 
 func main() {
 	flag.Parse()
@@ -23,13 +23,13 @@ func main() {
 	fatalOnErr(err, "NewClickHouseStore failed")
 	fatalOnErr(chStore.Migrate(), "ClickHouseStore migrate failed")
 
-	fbStore, err := clickhouseStore.NewLocalStore(*fallbackPath)
+	fbStore, err := clickhouseStore.NewLocalStore(*fallbackPath, time.Duration(*keepOk)*24*time.Hour)
 	fatalOnErr(err, "NewLocalStore failed")
 
 	rec := NewReceiver(chStore, fbStore, *chunkSize)
 
 	booksCh := make(chan *Book)
-	fatalOnErr(seed(booksCh), "seed books failed")
+	seed(booksCh)
 	log.Info("books seeder has been started")
 
 	uniqueCh := unique(booksCh)
@@ -41,7 +41,7 @@ func main() {
 	}()
 
 	for {
-		err = rec.MaintenanceWorker(time.Duration(*processFallbackSleep) * time.Second)
+		err = rec.MaintenanceWorker()
 		log.Warn("MaintenanceWorker error: " + err.Error())
 	}
 }
@@ -52,12 +52,10 @@ func fatalOnErr(err error, msg string) {
 	}
 }
 
-func seed(ch chan *Book) error {
+func seed(ch chan *Book) {
 	scrubber := NewBinanceScrubber()
 	symbols, err := scrubber.GetAllSymbols()
-	if err != nil {
-		return err
-	}
+	fatalOnErr(err, "get symbols failed")
 	worker := func(workerId int) {
 		for {
 			err := scrubber.SeedBooks(ch, symbols)
@@ -72,7 +70,6 @@ func seed(ch chan *Book) error {
 	for n := 1; n <= *connN; n++ {
 		go worker(n)
 	}
-	return nil
 }
 
 func unique(in chan *Book) chan *Book {
