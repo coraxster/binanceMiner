@@ -10,8 +10,15 @@ type ClickHouseStore struct {
 	conn *sql.DB
 }
 
-func NewClickHouseStore(conn *sql.DB) *ClickHouseStore {
-	return &ClickHouseStore{conn}
+func NewClickHouseStore(dsn string) (*ClickHouseStore, error) {
+	conn, err := sql.Open("clickhouse", dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := conn.Ping(); err != nil {
+		return nil, err
+	}
+	return &ClickHouseStore{conn}, nil
 }
 
 func (chs *ClickHouseStore) Migrate() error {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"flag"
 	"fmt"
 	"github.com/labstack/gommon/log"
@@ -18,31 +17,23 @@ var processFallbackSleep = flag.Int("process-fallback-sleep", 30, "process fallb
 
 func main() {
 	flag.Parse()
-	conn, err := connectClickHouse(*chDsn)
-	fatalOnErr(err, "connectClickHouse failed")
-	log.Info("clickhouse connected")
 
-	chStore := NewClickHouseStore(conn)
+	chStore, err := NewClickHouseStore(*chDsn)
 	fatalOnErr(err, "NewClickHouseStore failed")
-	fatalOnErr(chStore.Migrate(), "ClickHouseStore failed")
+	fatalOnErr(chStore.Migrate(), "ClickHouseStore migrate failed")
 
 	fbStore, err := NewLocalStore(*fallbackPath)
 	fatalOnErr(err, "NewLocalStore failed")
 
 	rec := NewReceiver(chStore, fbStore, *chunkSize)
 
-	scrubber := NewBinanceScrubber()
 	booksCh := make(chan *Book)
-	err = seed(booksCh, scrubber, *connN)
-	fatalOnErr(err, "seed books failed")
+	fatalOnErr(seed(booksCh), "seed books failed")
 	log.Info("books seeder has been started")
-
-	uniqueBooksCh := make(chan *Book, 30000) // about 30000 books/min in. clickhouse write timeout = 1 min
-	go unique(uniqueBooksCh, booksCh)
 
 	go func() {
 		for {
-			err = rec.Receive(uniqueBooksCh)
+			err = rec.Receive(unique(booksCh))
 			log.Warn("receive error: " + err.Error())
 		}
 	}()
@@ -53,24 +44,14 @@ func main() {
 	}
 }
 
-func connectClickHouse(dsn string) (*sql.DB, error) {
-	conn, err := sql.Open("clickhouse", dsn)
-	if err != nil {
-		return nil, err
-	}
-	if err := conn.Ping(); err != nil {
-		return nil, err
-	}
-	return conn, nil
-}
-
 func fatalOnErr(err error, msg string) {
 	if err != nil {
 		log.Fatal(errors.Wrap(err, msg))
 	}
 }
 
-func seed(ch chan *Book, scrubber *BinanceScrubber, connN int) error {
+func seed(ch chan *Book) error {
+	scrubber := NewBinanceScrubber()
 	symbols, err := scrubber.GetAllSymbols()
 	if err != nil {
 		return err
@@ -86,21 +67,24 @@ func seed(ch chan *Book, scrubber *BinanceScrubber, connN int) error {
 			time.Sleep(2 * time.Second)
 		}
 	}
-	for n := 1; n <= connN; n++ {
+	for n := 1; n <= *connN; n++ {
 		go worker(n)
 	}
 	return nil
 }
 
-// возможно лучше встроить в scrubber, но это неточно
-func unique(out chan *Book, in chan *Book) {
+func unique(in chan *Book) chan *Book {
+	out := make(chan *Book, 30000) // about 30000 books/min in. clickhouse write timeout = 1 min
 	c := cache.New(10*time.Minute, 20*time.Minute)
-	for b := range in {
-		key := fmt.Sprint(b.Symbol, b.SecN)
-		if _, exists := c.Get(key); exists {
-			continue
+	go func() {
+		for b := range in {
+			key := fmt.Sprint(b.Symbol, b.SecN)
+			if _, exists := c.Get(key); exists {
+				continue
+			}
+			c.Set(key, struct{}{}, cache.DefaultExpiration)
+			out <- b
 		}
-		c.Set(key, struct{}{}, cache.DefaultExpiration)
-		out <- b
-	}
+	}()
+	return out
 }
