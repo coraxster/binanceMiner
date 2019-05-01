@@ -78,23 +78,37 @@ func (rec *Receiver) Store(books []*clickhouseStore.Book) error {
 	return err
 }
 
-func (rec *Receiver) ProcessFallback(sleep time.Duration) error {
+func (rec *Receiver) MaintenanceWorker(sleep time.Duration) error {
 	for {
 		time.Sleep(sleep)
-		key, books, err := rec.fbStore.Get()
-		if err != nil {
+		if err := rec.processFallback(); err != nil {
 			return err
 		}
-		if len(books) == 0 {
-			continue
-		}
-		err = rec.mainStore.Store(books)
-		if err != nil {
-			return err
-		}
-		err = rec.fbStore.Delete(key)
-		if err != nil {
+		if err := rec.cleanup(); err != nil {
 			return err
 		}
 	}
+}
+
+func (rec *Receiver) processFallback() error {
+	key, books, err := rec.fbStore.Get()
+	if err != nil {
+		return err
+	}
+	if len(books) == 0 {
+		return nil
+	}
+	err = rec.mainStore.Store(books)
+	if err != nil {
+		return err
+	}
+	err = rec.fbStore.Delete(key)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (rec *Receiver) cleanup() error {
+	return nil
 }

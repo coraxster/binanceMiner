@@ -35,14 +35,14 @@ func main() {
 	uniqueCh := unique(booksCh)
 	go func() {
 		for {
-			err = rec.Receive(uniqueCh)
+			err := rec.Receive(uniqueCh)
 			log.Warn("receive error: " + err.Error())
 		}
 	}()
 
 	for {
-		err = rec.ProcessFallback(time.Duration(*processFallbackSleep) * time.Second)
-		log.Warn("processFallback error: " + err.Error())
+		err = rec.MaintenanceWorker(time.Duration(*processFallbackSleep) * time.Second)
+		log.Warn("MaintenanceWorker error: " + err.Error())
 	}
 }
 
