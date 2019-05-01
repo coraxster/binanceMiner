@@ -87,13 +87,15 @@ func (rec *Receiver) Store(books []*clickhouseStore.Book) error {
 
 func (rec *Receiver) MaintenanceWorker() error {
 	for {
-		<-retryTicker.C
-		if err := rec.retryFailed(); err != nil {
-			return errors.Wrap(err, "retryFailed failed")
-		}
-		<-cleanupTicker.C
-		if err := rec.fbStore.CleanupOk(); err != nil {
-			return errors.Wrap(err, "ok cleanup failed")
+		select {
+		case <-retryTicker.C:
+			if err := rec.retryFailed(); err != nil {
+				return errors.Wrap(err, "retryFailed failed")
+			}
+		case <-cleanupTicker.C:
+			if err := rec.fbStore.CleanupOk(); err != nil {
+				return errors.Wrap(err, "ok cleanup failed")
+			}
 		}
 	}
 }

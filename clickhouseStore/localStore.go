@@ -1,6 +1,7 @@
 package clickhouseStore
 
 import (
+	"compress/gzip"
 	"encoding/gob"
 	"errors"
 	"fmt"
@@ -51,36 +52,44 @@ func (s *LocalStore) StoreToRetry(books []*Book) error {
 }
 
 func (s *LocalStore) store(path string, books []*Book) error {
-	filePath := fmt.Sprintf("%s/%s.data", path, time.Now().Format("2006-01-02T15:04:05.999999-07:00"))
+	filePath := fmt.Sprintf("%s/%s.gzip", path, time.Now().Format("2006-01-02T15:04:05.999999-07:00"))
 	file, err := os.Create(filePath)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	encoder := gob.NewEncoder(file)
+	zw := gzip.NewWriter(file)
+	defer zw.Close()
+	encoder := gob.NewEncoder(zw)
 	return encoder.Encode(books)
 }
 
 func (s *LocalStore) GetToRetry() (string, []*Book, error) {
-	filePaths, err := filepath.Glob(s.retryPath + "/*.data")
+	filePaths, err := filepath.Glob(s.retryPath + "/*.gzip")
 	if err != nil {
+		return "", nil, err
+	}
+	if len(filePaths) == 0 {
 		return "", nil, nil
 	}
+	fp := filePaths[0]
 	books := make([]*Book, 0)
-	for _, fp := range filePaths {
-		file, err := os.Open(fp)
-		if err != nil {
-			return "", nil, err
-		}
-		defer file.Close()
-		decoder := gob.NewDecoder(file)
-		err = decoder.Decode(&books)
-		if err != nil {
-			return "", nil, err
-		}
-		return fp, books, nil
+	file, err := os.Open(fp)
+	if err != nil {
+		return "", nil, err
 	}
-	return "", nil, nil
+	defer file.Close()
+	zr, err := gzip.NewReader(file)
+	if err != nil {
+		return "", nil, err
+	}
+	defer zr.Close()
+	decoder := gob.NewDecoder(zr)
+	err = decoder.Decode(&books)
+	if err != nil {
+		return "", nil, err
+	}
+	return fp, books, nil
 }
 
 func (s *LocalStore) Delete(path string) error {
