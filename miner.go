@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/coraxster/binanceMiner/clickhouseStore"
 	"github.com/gorilla/websocket"
 	"io/ioutil"
 	"net/http"
@@ -16,6 +17,7 @@ const BinanceSymbolsUrl = "https://www.binance.com/api/v3/ticker/price"
 const BinanceBooksHost = "stream.binance.com:9443"
 const StreamSuffix = "@depth10"
 const StreamTimelimit = 23 * time.Hour
+const SourceKey = "binance"
 
 type BinanceMiner struct {
 	aliveCount int32
@@ -25,20 +27,11 @@ func NewBinanceMiner() *BinanceMiner {
 	return &BinanceMiner{}
 }
 
-type Book struct {
-	Source string
-	Time   time.Time
-	Symbol string
-	SecN   int
-	Bids   [][2]float64 // price, quantity
-	Asks   [][2]float64 // price, quantity
-}
-
 func (s *BinanceMiner) AliveCount() int {
 	return int(atomic.LoadInt32(&s.aliveCount))
 }
 
-func (s *BinanceMiner) SeedBooks(ch chan *Book, symbols []string) error {
+func (s *BinanceMiner) SeedBooks(ch chan *clickhouseStore.Book, symbols []string) error {
 	query := "streams="
 	for _, s := range symbols {
 		query = query + strings.ToLower(s) + StreamSuffix + "/"
@@ -70,31 +63,33 @@ type streamResponseData struct {
 	Bids         streamQuotes
 	Asks         streamQuotes
 }
-type streamQuotes [][2]float64
+type streamQuotes struct {
+	Prices     []float64
+	Quantities []float64
+}
 
 func (c *streamQuotes) UnmarshalJSON(b []byte) error {
 	tmp := make([][2]json.Number, 0)
 	if err := json.Unmarshal(b, &tmp); err != nil {
 		return err
 	}
-	*c = make(streamQuotes, len(tmp))
+	c.Prices = make([]float64, len(tmp))
+	c.Quantities = make([]float64, len(tmp))
 	for i, a := range tmp {
-		var pair [2]float64
 		var err error
-		pair[0], err = a[0].Float64()
+		c.Prices[i], err = a[0].Float64()
 		if err != nil {
 			return err
 		}
-		pair[1], err = a[1].Float64()
+		c.Quantities[i], err = a[1].Float64()
 		if err != nil {
 			return err
 		}
-		(*c)[i] = pair
 	}
 	return nil
 }
 
-func (s *BinanceMiner) seed(ctx context.Context, ch chan *Book, query string) error {
+func (s *BinanceMiner) seed(ctx context.Context, ch chan *clickhouseStore.Book, query string) error {
 	u := url.URL{Scheme: "wss", Host: BinanceBooksHost, Path: "/stream", RawQuery: query}
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
@@ -106,17 +101,21 @@ func (s *BinanceMiner) seed(ctx context.Context, ch chan *Book, query string) er
 
 	var r streamResponse
 	for {
-		_, message, err := c.ReadMessage()
-		if err != nil {
+		if err = c.ReadJSON(&r); err != nil {
 			return err
 		}
 		t := time.Now()
-		err = json.Unmarshal(message, &r)
-		if err != nil {
-			return err
-		}
 		symbol := r.Stream[0 : len(r.Stream)-len(StreamSuffix)]
-		ch <- &Book{"binance", t, symbol, r.Data.LastUpdateId, r.Data.Bids, r.Data.Asks}
+		ch <- &clickhouseStore.Book{
+			Source:        SourceKey,
+			Time:          t,
+			Symbol:        symbol,
+			SecN:          r.Data.LastUpdateId,
+			BidPrices:     r.Data.Bids.Prices,
+			AskPrices:     r.Data.Asks.Prices,
+			BidQuantities: r.Data.Bids.Quantities,
+			AskQuantities: r.Data.Asks.Quantities,
+		}
 		select {
 		case <-ctx.Done():
 			return nil

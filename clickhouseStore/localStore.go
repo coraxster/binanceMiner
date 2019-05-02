@@ -15,10 +15,9 @@ import (
 type LocalStore struct {
 	okPath    string
 	retryPath string
-	keepOk    time.Duration
 }
 
-func NewLocalStore(path string, keepOk time.Duration) (*LocalStore, error) {
+func NewLocalStore(path string) (*LocalStore, error) {
 	okPath := path + "ok/"
 	retryPath := path + "failed/"
 	if err := makeDir(okPath); err != nil {
@@ -27,7 +26,7 @@ func NewLocalStore(path string, keepOk time.Duration) (*LocalStore, error) {
 	if err := makeDir(retryPath); err != nil {
 		return nil, err
 	}
-	return &LocalStore{okPath, retryPath, keepOk}, nil
+	return &LocalStore{okPath, retryPath}, nil
 }
 
 func makeDir(path string) error {
@@ -96,14 +95,14 @@ func (s *LocalStore) Delete(path string) error {
 	return os.Remove(path)
 }
 
-func (s *LocalStore) CleanupOk() error {
+func (s *LocalStore) CleanupOk(keepOk time.Duration) error {
 	fileInfo, err := ioutil.ReadDir(s.okPath)
 	if err != nil {
 		return err
 	}
 	now := time.Now()
 	for _, info := range fileInfo {
-		if diff := now.Sub(info.ModTime()); diff < s.keepOk {
+		if diff := now.Sub(info.ModTime()); diff < keepOk {
 			continue
 		}
 		if err = os.Remove(s.okPath + info.Name()); err != nil {

@@ -7,6 +7,7 @@ import (
 	"github.com/labstack/gommon/log"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
+	"github.com/pkg/profile"
 	"time"
 )
 
@@ -17,25 +18,32 @@ var fallbackPath = flag.String("fallback-path", "/tmp/binanceMiner/", "a place t
 var keepOkDays = flag.Int("keep-ok", 7, "how long keep sent books(days)")
 
 func main() {
+	p := profile.Start(profile.MemProfile)
+	go func() {
+		time.Sleep(time.Minute * 10)
+		p.Stop()
+		log.Fatal("Done")
+	}()
+
 	flag.Parse()
 
-	chStore, err := clickhouseStore.NewClickHouseStore(*chDsn)
-	fatalOnErr(err, "NewClickHouseStore failed")
-	fatalOnErr(chStore.Migrate(), "ClickHouseStore migrate failed")
+	rec, err := clickhouseStore.NewReceiver(
+		*chDsn,
+		*chunkSize,
+		*fallbackPath,
+		time.Duration(*keepOkDays)*24*time.Hour,
+	)
+	fatalOnErr(err, "NewReceiver failed")
+	log.Info("clickhouseStore Receiver has been started")
 
-	fbStore, err := clickhouseStore.NewLocalStore(*fallbackPath, time.Duration(*keepOkDays)*24*time.Hour)
-	fatalOnErr(err, "NewLocalStore failed")
-
-	rec := clickhouseStore.NewReceiver(chStore, fbStore, *chunkSize)
-
-	booksCh := make(chan *Book)
+	booksCh := make(chan *clickhouseStore.Book)
 	seed(booksCh)
 	log.Info("books seeder has been started")
 
-	uniqueBooksCh := unique(booksCh)
+	uniqueClickBooksCh := unique(booksCh)
 	go func() {
 		for {
-			err := rec.Receive(convert(uniqueBooksCh))
+			err := rec.Receive(uniqueClickBooksCh)
 			log.Warn("receive error: " + err.Error())
 		}
 	}()
@@ -52,7 +60,7 @@ func fatalOnErr(err error, msg string) {
 	}
 }
 
-func seed(ch chan *Book) {
+func seed(ch chan *clickhouseStore.Book) {
 	miner := NewBinanceMiner()
 	symbols, err := miner.GetAllSymbols()
 	fatalOnErr(err, "get symbols failed")
@@ -72,8 +80,8 @@ func seed(ch chan *Book) {
 	}
 }
 
-func unique(in chan *Book) chan *Book {
-	out := make(chan *Book, 30000) // about 30000 books/min in. clickhouse write timeout = 1 min
+func unique(in chan *clickhouseStore.Book) chan *clickhouseStore.Book {
+	out := make(chan *clickhouseStore.Book, 30000) // about 30000 books/min in. clickhouse write timeout = 1 min
 	c := cache.New(10*time.Minute, 20*time.Minute)
 	go func() {
 		for b := range in {
@@ -83,40 +91,6 @@ func unique(in chan *Book) chan *Book {
 			}
 			c.Set(key, struct{}{}, cache.DefaultExpiration)
 			out <- b
-		}
-	}()
-	return out
-}
-
-func convert(in chan *Book) chan *clickhouseStore.Book {
-	out := make(chan *clickhouseStore.Book)
-	convertFunc := func(book *Book) *clickhouseStore.Book {
-		askPrices := make([]float64, 0, len(book.Asks))
-		askQuantities := make([]float64, 0, len(book.Asks))
-		bidPrices := make([]float64, 0, len(book.Bids))
-		bidQuantities := make([]float64, 0, len(book.Bids))
-		for _, q := range book.Asks {
-			askPrices = append(askPrices, q[0])
-			askQuantities = append(askQuantities, q[1])
-		}
-		for _, q := range book.Bids {
-			bidPrices = append(bidPrices, q[0])
-			bidQuantities = append(bidQuantities, q[1])
-		}
-		return &clickhouseStore.Book{
-			Source:        book.Source,
-			Time:          book.Time,
-			Symbol:        book.Symbol,
-			SecN:          book.SecN,
-			BidPrices:     bidPrices,
-			AskPrices:     askPrices,
-			BidQuantities: bidQuantities,
-			AskQuantities: askQuantities,
-		}
-	}
-	go func() {
-		for b := range in {
-			out <- convertFunc(b)
 		}
 	}()
 	return out

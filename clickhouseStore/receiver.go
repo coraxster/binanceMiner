@@ -14,20 +14,33 @@ type FallbackStore interface {
 	StoreToRetry([]*Book) error
 	GetToRetry() (string, []*Book, error)
 	Delete(key string) error
-	CleanupOk() error
+	CleanupOk(time.Duration) error
 }
 
 type Receiver struct {
 	mainStore Store
 	fbStore   FallbackStore
 	chunkSize int
+	keepOk    time.Duration
 }
 
 var retryTicker = time.NewTicker(5 * time.Second)
 var cleanupTicker = time.NewTicker(24 * time.Hour)
 
-func NewReceiver(store Store, fbStore FallbackStore, chunkSize int) *Receiver {
-	return &Receiver{store, fbStore, chunkSize}
+func NewReceiver(dsn string, chunkSize int, fbPath string, keepOk time.Duration) (*Receiver, error) {
+	chStore, err := NewClickHouseStore(dsn)
+	if err != nil {
+		return nil, errors.Wrap(err, "NewClickHouseStore failed")
+	}
+	if err = chStore.Migrate(); err != nil {
+		return nil, errors.Wrap(err, "ClickHouseStore migrate failed")
+	}
+
+	fbStore, err := NewLocalStore(fbPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "NewLocalStore failed")
+	}
+	return &Receiver{chStore, fbStore, chunkSize, keepOk}, nil
 }
 
 func (rec *Receiver) Receive(ch chan *Book) error {
@@ -47,16 +60,19 @@ func (rec *Receiver) Receive(ch chan *Book) error {
 
 func (rec *Receiver) Store(books []*Book) error {
 	err := rec.mainStore.Store(books)
-	if err == nil {
-		if err := rec.fbStore.StoreOk(books); err != nil {
-			return errors.Wrap(err, "main stored, but fallback StoreOk failed :(")
+	if err != nil {
+		if fbErr := rec.fbStore.StoreToRetry(books); fbErr != nil {
+			return errors.Wrap(err, "main failed, fallback StoreToRetry also failed :(")
 		}
+		return err
+	}
+	if rec.keepOk == 0 {
 		return nil
 	}
-	if fbErr := rec.fbStore.StoreToRetry(books); fbErr != nil {
-		return errors.Wrap(err, "main failed, fallback StoreToRetry also failed :(")
+	if err := rec.fbStore.StoreOk(books); err != nil {
+		return errors.Wrap(err, "main stored, but fallback StoreOk failed :(")
 	}
-	return err
+	return nil
 }
 
 func (rec *Receiver) MaintenanceWorker() error {
@@ -67,7 +83,10 @@ func (rec *Receiver) MaintenanceWorker() error {
 				return errors.Wrap(err, "retryFailed failed")
 			}
 		case <-cleanupTicker.C:
-			if err := rec.fbStore.CleanupOk(); err != nil {
+			if rec.keepOk == 0 {
+				continue
+			}
+			if err := rec.fbStore.CleanupOk(rec.keepOk); err != nil {
 				return errors.Wrap(err, "ok cleanup failed")
 			}
 		}

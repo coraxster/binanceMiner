@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// this package is ready to be allot
+
 type Book struct {
 	Source        string
 	Time          time.Time
