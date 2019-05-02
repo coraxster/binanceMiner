@@ -121,7 +121,6 @@ func sortBooks(books []*Book) {
 		if books[i].Symbol > books[j].Symbol {
 			return false
 		}
-
 		return books[i].SecN < books[j].SecN
 	})
 }

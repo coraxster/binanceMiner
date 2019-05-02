@@ -15,6 +15,7 @@ type FallbackStore interface {
 	GetToRetry() (string, []*Book, error)
 	Delete(key string) error
 	CleanupOk(time.Duration) error
+	MoveToOk(path string) error
 }
 
 type Receiver struct {
@@ -24,11 +25,18 @@ type Receiver struct {
 	keepOk    time.Duration
 }
 
+type ReceiverConfig struct {
+	ClickhouseDSN string
+	ChunkSize     int
+	FallbackPath  string
+	KeepOk        time.Duration
+}
+
 var retryTicker = time.NewTicker(5 * time.Second)
 var cleanupTicker = time.NewTicker(24 * time.Hour)
 
-func NewReceiver(dsn string, chunkSize int, fbPath string, keepOk time.Duration) (*Receiver, error) {
-	chStore, err := NewClickHouseStore(dsn)
+func NewReceiver(config ReceiverConfig) (*Receiver, error) {
+	chStore, err := NewClickHouseStore(config.ClickhouseDSN)
 	if err != nil {
 		return nil, errors.Wrap(err, "NewClickHouseStore failed")
 	}
@@ -36,11 +44,11 @@ func NewReceiver(dsn string, chunkSize int, fbPath string, keepOk time.Duration)
 		return nil, errors.Wrap(err, "ClickHouseStore migrate failed")
 	}
 
-	fbStore, err := NewLocalStore(fbPath)
+	fbStore, err := NewLocalStore(config.FallbackPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "NewLocalStore failed")
 	}
-	return &Receiver{chStore, fbStore, chunkSize, keepOk}, nil
+	return &Receiver{chStore, fbStore, config.ChunkSize, config.KeepOk}, nil
 }
 
 func (rec *Receiver) Receive(ch chan *Book) error {
@@ -64,7 +72,7 @@ func (rec *Receiver) Store(books []*Book) error {
 		if fbErr := rec.fbStore.StoreToRetry(books); fbErr != nil {
 			return errors.Wrap(err, "main failed, fallback StoreToRetry also failed :(")
 		}
-		return err
+		return errors.Wrap(err, "main failed, fallback stored")
 	}
 	if rec.keepOk == 0 {
 		return nil
@@ -87,7 +95,7 @@ func (rec *Receiver) MaintenanceWorker() error {
 				continue
 			}
 			if err := rec.fbStore.CleanupOk(rec.keepOk); err != nil {
-				return errors.Wrap(err, "ok cleanup failed")
+				return errors.Wrap(err, "CleanupOk failed")
 			}
 		}
 	}
@@ -104,11 +112,8 @@ func (rec *Receiver) retryFailed() error {
 	if err = rec.mainStore.Store(books); err != nil {
 		return errors.Wrap(err, "retry. main store failed :(")
 	}
-	if err = rec.fbStore.Delete(key); err != nil {
-		return errors.Wrap(err, "retry. Delete failed :(")
-	}
-	if err := rec.fbStore.StoreOk(books); err != nil {
-		return errors.Wrap(err, "retry main stored, but fallback StoreOk failed :(")
+	if err = rec.fbStore.MoveToOk(key); err != nil {
+		return errors.Wrap(err, "retry. MoveToOk failed :(")
 	}
 	return nil
 }

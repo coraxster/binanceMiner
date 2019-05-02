@@ -95,6 +95,11 @@ func (s *LocalStore) Delete(path string) error {
 	return os.Remove(path)
 }
 
+func (s *LocalStore) MoveToOk(path string) error {
+	newPath := s.okPath + filepath.Base(path)
+	return os.Rename(path, newPath)
+}
+
 func (s *LocalStore) CleanupOk(keepOk time.Duration) error {
 	fileInfo, err := ioutil.ReadDir(s.okPath)
 	if err != nil {

@@ -28,10 +28,12 @@ func main() {
 	flag.Parse()
 
 	rec, err := clickhouseStore.NewReceiver(
-		*chDsn,
-		*chunkSize,
-		*fallbackPath,
-		time.Duration(*keepOkDays)*24*time.Hour,
+		clickhouseStore.ReceiverConfig{
+			ClickhouseDSN: *chDsn,
+			ChunkSize:     *chunkSize,
+			FallbackPath:  *fallbackPath,
+			KeepOk:        time.Duration(*keepOkDays) * 24 * time.Hour,
+		},
 	)
 	fatalOnErr(err, "NewReceiver failed")
 	log.Info("clickhouseStore Receiver has been started")
