@@ -1,4 +1,4 @@
-package main
+package clickhouseStore
 
 import (
 	"math/rand"
