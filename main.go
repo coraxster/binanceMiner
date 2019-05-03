@@ -4,12 +4,15 @@ import (
 	"flag"
 	"fmt"
 	"github.com/coraxster/binanceMiner/clickhouseStore"
-	"github.com/labstack/gommon/log"
+	"github.com/onrik/logrus/sentry"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
-	"github.com/pkg/profile"
+	"github.com/sirupsen/logrus"
+	"os"
 	"time"
 )
+
+var Version = "0.0.0" // go build -ldflags "-X main.Version=0.0.1"
 
 var chDsn = flag.String("clickhouse-dsn", "tcp://localhost:9000?username=default&compress=true", "clickhouse dsn")
 var connN = flag.Int("binance-conn-n", 2, "binance connections number")
@@ -17,16 +20,17 @@ var chunkSize = flag.Int("chunk-size", 100000, "collect chunk-size then push to 
 var fallbackPath = flag.String("fallback-path", "/tmp/binanceMiner/", "a place to store failed books")
 var keepOkDays = flag.Int("keep-ok", 7, "how long keep sent books(days)")
 
+var log = logrus.New()
+
 func main() {
-	p := profile.Start(profile.MemProfile)
-	go func() {
-		time.Sleep(time.Minute * 10)
-		p.Stop()
-		log.Fatal("Done")
-	}()
-
+	log.Info("version: " + Version)
+	if sentryDSN := os.Getenv("SENTRY_DSN"); sentryDSN != "" {
+		sentryHook := sentry.NewHook(sentryDSN, logrus.PanicLevel, logrus.FatalLevel, logrus.ErrorLevel, logrus.WarnLevel)
+		sentryHook.SetRelease(Version)
+		log.AddHook(sentryHook)
+		log.Info("sentry enabled")
+	}
 	flag.Parse()
-
 	rec, err := clickhouseStore.NewReceiver(
 		clickhouseStore.ReceiverConfig{
 			ClickhouseDSN: *chDsn,

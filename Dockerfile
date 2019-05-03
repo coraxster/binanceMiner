@@ -3,7 +3,7 @@ RUN apk add git tzdata
 ADD . /go/src/github.com/coraxster/binanceMiner
 WORKDIR /go/src/github.com/coraxster/binanceMiner
 RUN go get ./...
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o /app .
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-extldflags "-static" -X main.Version=$SOURCE_BRANCH($SOURCE_COMMIT)" -o /app .
 
 FROM scratch
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
