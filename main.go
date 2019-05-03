@@ -18,7 +18,7 @@ var chDsn = flag.String("clickhouse-dsn", "tcp://localhost:9000?username=default
 var connN = flag.Int("binance-conn-n", 2, "binance connections number")
 var chunkSize = flag.Int("chunk-size", 100000, "collect chunk-size then push to clickhouse, 100000 - about 30mb")
 var fallbackPath = flag.String("fallback-path", "/tmp/binanceMiner/", "a place to store failed books")
-var keepOkDays = flag.Int("keep-ok", 7, "how long keep sent books(days)")
+var keepOkDays = flag.Int("keep-ok", 0, "how long keep sent books(days)")
 
 var log = logrus.New()
 
