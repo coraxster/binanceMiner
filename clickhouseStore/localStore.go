@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"golang.org/x/sys/unix"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -60,7 +61,13 @@ func (s *LocalStore) store(path string, books []*Book) error {
 	zw := gzip.NewWriter(file)
 	defer zw.Close()
 	encoder := gob.NewEncoder(zw)
-	return encoder.Encode(books)
+	for _, b := range books {
+		err = encoder.Encode(b)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *LocalStore) GetToRetry() (string, []*Book, error) {
@@ -84,11 +91,17 @@ func (s *LocalStore) GetToRetry() (string, []*Book, error) {
 	}
 	defer zr.Close()
 	decoder := gob.NewDecoder(zr)
-	err = decoder.Decode(&books)
-	if err != nil {
-		return "", nil, err
+	for {
+		b := Book{}
+		err = decoder.Decode(&b)
+		if err == io.EOF {
+			return fp, books, nil
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		books = append(books, &b)
 	}
-	return fp, books, nil
 }
 
 func (s *LocalStore) Delete(path string) error {
