@@ -4,11 +4,9 @@ import (
 	"flag"
 	"github.com/coraxster/binanceMiner/clickhouseStore"
 	"github.com/onrik/logrus/sentry"
-	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -23,6 +21,8 @@ var keepOkDays = flag.Int("keep-ok", 0, "how long keep sent books(days)")
 var log = logrus.New()
 
 func main() {
+	//defer profile.Start(profile.MemProfile).Stop()
+
 	log.Info("version: " + Version)
 	if sentryDSN := os.Getenv("SENTRY_DSN"); sentryDSN != "" {
 		sentryHook := sentry.NewHook(sentryDSN, logrus.PanicLevel, logrus.FatalLevel, logrus.ErrorLevel, logrus.WarnLevel)
@@ -46,10 +46,9 @@ func main() {
 	seed(booksCh)
 	log.Info("books seeder has been started")
 
-	uniqueClickBooksCh := unique(booksCh)
 	go func() {
 		for {
-			err := rec.Receive(uniqueClickBooksCh)
+			err := rec.Receive(booksCh)
 			log.Warn("receive error: " + err.Error())
 		}
 	}()
@@ -67,7 +66,7 @@ func fatalOnErr(err error, msg string) {
 }
 
 func seed(ch chan *clickhouseStore.Book) {
-	miner := NewBinanceMiner()
+	miner := NewBinanceMiner(20)
 	symbols, err := miner.GetAllSymbols()
 	fatalOnErr(err, "get symbols failed")
 	worker := func(workerId int) {
@@ -84,20 +83,4 @@ func seed(ch chan *clickhouseStore.Book) {
 	for n := 1; n <= *connN; n++ {
 		go worker(n)
 	}
-}
-
-func unique(in chan *clickhouseStore.Book) chan *clickhouseStore.Book {
-	out := make(chan *clickhouseStore.Book, 30000) // about 30000 books/min in. clickhouse write timeout = 1 min
-	c := cache.New(10*time.Minute, 20*time.Minute)
-	go func() {
-		for b := range in {
-			key := b.Symbol + strconv.Itoa(b.SecN)
-			if _, exists := c.Get(key); exists {
-				continue
-			}
-			c.Set(key, struct{}{}, cache.DefaultExpiration)
-			out <- b
-		}
-	}()
-	return out
 }
