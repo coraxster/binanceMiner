@@ -2,20 +2,20 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"github.com/coraxster/binanceMiner/clickhouseStore"
 	"github.com/onrik/logrus/sentry"
 	"github.com/patrickmn/go-cache"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"os"
+	"strconv"
 	"time"
 )
 
 var Version = "0.0.0" // go build -ldflags "-X main.Version=0.0.1"
 
 var chDsn = flag.String("clickhouse-dsn", "tcp://localhost:9000?username=default&compress=true", "clickhouse dsn")
-var connN = flag.Int("binance-conn-n", 2, "binance connections number")
+var connN = flag.Int("binance-conn-n", 1, "binance connections number")
 var chunkSize = flag.Int("chunk-size", 100000, "collect chunk-size then push to clickhouse, 100000 - about 30mb")
 var fallbackPath = flag.String("fallback-path", "/tmp/binanceMiner/", "a place to store failed books")
 var keepOkDays = flag.Int("keep-ok", 0, "how long keep sent books(days)")
@@ -91,7 +91,7 @@ func unique(in chan *clickhouseStore.Book) chan *clickhouseStore.Book {
 	c := cache.New(10*time.Minute, 20*time.Minute)
 	go func() {
 		for b := range in {
-			key := fmt.Sprint(b.Symbol, b.SecN)
+			key := b.Symbol + strconv.Itoa(b.SecN)
 			if _, exists := c.Get(key); exists {
 				continue
 			}
