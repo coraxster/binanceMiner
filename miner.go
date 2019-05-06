@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 )
 
@@ -24,73 +24,76 @@ const SourceKey = "binance"
 const BinanceBooksUrlTmpl = "https://www.binance.com/api/v1/depth?symbol=%s&limit=500"
 
 type BinanceMiner struct {
-	aliveCount int32
-	topSize    int
+	connN   int
+	topSize int
 }
 
-func NewBinanceMiner(topSize int) *BinanceMiner {
-	return &BinanceMiner{topSize: topSize}
-}
-
-func (s *BinanceMiner) AliveCount() int {
-	return int(atomic.LoadInt32(&s.aliveCount))
+func NewBinanceMiner(topSize int, connN int) *BinanceMiner {
+	return &BinanceMiner{connN: connN, topSize: topSize}
 }
 
 func (s *BinanceMiner) SeedBooks(ch chan *clickhouseStore.Book, symbols []string) error {
 	ctx, cancelSeed := context.WithCancel(context.Background())
-	seedErrCh := make(chan error)
+	defer cancelSeed()
 	updatesCh := make(chan *streamResponseData, 1000)
 	go func() {
-		seedErrCh <- s.seedTimingOut(ctx, updatesCh, symbols)
-		close(seedErrCh)
+		s.multiSeed(ctx, updatesCh, symbols)
 		close(updatesCh)
 	}()
-	select {
-	case err := <-seedErrCh:
-		return err
-	case <-time.After(5 * time.Second):
-	}
+	time.Sleep(5 * time.Second)
 	bState, err := s.getFullBooksState(symbols)
 	if err != nil {
-		cancelSeed()
 		return err
 	}
-	for {
-		select {
-		case err := <-seedErrCh:
-			return err
-		case bUpdate := <-updatesCh:
-			updatingBook, ok := bState[bUpdate.Symbol]
-			if !ok {
-				fmt.Println("symbol not found in booksState: ", bUpdate.Symbol)
-				continue
-			}
-			if bUpdate.FirstSecN > updatingBook.secN+1 {
-				return errors.New(fmt.Sprintf("got %d > %d", bUpdate.FirstSecN, updatingBook.secN+1))
-			}
-			if bUpdate.LastSecN < updatingBook.secN+1 {
-				fmt.Println("got ", bUpdate.LastSecN, " < ", updatingBook.secN+1, " skipping.")
-				continue
-			}
-			updatingBook.secN = bUpdate.LastSecN
-			updatingBook.time = time.Unix(int64(bUpdate.Ts)/1000, int64(bUpdate.Ts)%1000*1000000)
-			updatingBook.updatePrices(bUpdate.Bids, bUpdate.Asks)
-			ch <- convertToClickhouse(bUpdate.Symbol, updatingBook, s.topSize)
+	for bUpdate := range updatesCh {
+		updatingBook, ok := bState[bUpdate.Symbol]
+		if !ok {
+			fmt.Println("symbol not found in booksState: ", bUpdate.Symbol)
+			continue
+		}
+		if bUpdate.FirstSecN > updatingBook.secN+1 {
+			return errors.New(fmt.Sprintf("got %d > %d", bUpdate.FirstSecN, updatingBook.secN+1))
+		}
+		if bUpdate.LastSecN < updatingBook.secN+1 {
+			continue
+		}
+		updatingBook.secN = bUpdate.LastSecN
+		updatingBook.time = time.Unix(int64(bUpdate.Ts)/1000, int64(bUpdate.Ts)%1000*1000000)
+		updatingBook.updatePrices(bUpdate.Bids, bUpdate.Asks)
+		ch <- convertToClickhouse(updatingBook, s.topSize)
+	}
+	return errors.New("unexpected updatesCh close")
+}
 
+func (s *BinanceMiner) multiSeed(ctx context.Context, updatesCh chan *streamResponseData, symbols []string) {
+	wg := sync.WaitGroup{}
+	worker := func(workerId int) {
+		defer wg.Done()
+		for {
+			err := s.seedTimingOut(ctx, updatesCh, symbols)
+			log.Warn(workerId, ": ", err)
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 		}
 	}
+	for i := 0; i < s.connN; i++ {
+		wg.Add(1)
+		go worker(i)
+	}
+	wg.Wait()
 }
 
 func (s *BinanceMiner) seedTimingOut(ctx context.Context, updatesCh chan *streamResponseData, symbols []string) error {
-	query := "streams="
-	for _, s := range symbols {
-		query = query + strings.ToLower(s) + StreamSuffix + "/"
-	}
+	ctx, cancelSeed := context.WithCancel(ctx)
+	defer cancelSeed()
 	for {
 		workerErrCh := make(chan error)
-		ctx, _ := context.WithTimeout(ctx, StreamTimelimit)
+		workerCtx, _ := context.WithTimeout(ctx, StreamTimelimit)
 		go func() {
-			workerErrCh <- s.seed(ctx, updatesCh, query)
+			workerErrCh <- s.seed(workerCtx, updatesCh, symbols)
 			close(workerErrCh)
 		}()
 		select {
@@ -139,33 +142,40 @@ func (c *binanceQuotes) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func (s *BinanceMiner) seed(ctx context.Context, ch chan *streamResponseData, query string) error {
+func (s *BinanceMiner) seed(ctx context.Context, ch chan *streamResponseData, symbols []string) error {
+	query := "streams="
+	for _, s := range symbols {
+		query = query + strings.ToLower(s) + StreamSuffix + "/"
+	}
 	u := url.URL{Scheme: "wss", Host: BinanceUpdatesHost, Path: "/stream", RawQuery: query}
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
 		return err
 	}
-	atomic.AddInt32(&s.aliveCount, 1)
 	defer c.Close()
-	defer atomic.AddInt32(&s.aliveCount, -1)
-
 	for {
 		var r streamResponse
 		if err := c.ReadJSON(&r); err != nil {
 			return err
 		}
-		ch <- &r.Data
 		select {
 		case <-ctx.Done():
 			return nil
 		default:
 		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case ch <- &r.Data:
+		}
+
 	}
 }
 
-type booksSate map[string]*booksSateQuotes
+type booksSate map[string]*book
 
-type booksSateQuotes struct {
+type book struct {
+	symbol   string
 	secN     int
 	time     time.Time
 	bids     map[float64]float64
@@ -186,7 +196,7 @@ func treeComparator(a, b interface{}) int {
 	return 0
 }
 
-func (sq *booksSateQuotes) topBids(n int) []float64 {
+func (sq *book) topBids(n int) []float64 {
 	top := make([]float64, 0, 20)
 	it := sq.bidsTree.Iterator()
 	it.End()
@@ -200,7 +210,7 @@ func (sq *booksSateQuotes) topBids(n int) []float64 {
 	return top
 }
 
-func (sq *booksSateQuotes) topAsks(n int) []float64 {
+func (sq *book) topAsks(n int) []float64 {
 	top := make([]float64, 0, 20)
 	it := sq.asksTree.Iterator()
 	i := 0
@@ -213,7 +223,7 @@ func (sq *booksSateQuotes) topAsks(n int) []float64 {
 	return top
 }
 
-func (sq *booksSateQuotes) updatePrices(bids binanceQuotes, asks binanceQuotes) {
+func (sq *book) updatePrices(bids binanceQuotes, asks binanceQuotes) {
 	for _, q := range bids {
 		if q[1] == 0 {
 			sq.bidsTree.Remove(q[0])
@@ -242,7 +252,7 @@ type fullBookResponse struct {
 }
 
 func (s *BinanceMiner) getFullBooksState(symbols []string) (booksSate, error) {
-	bState := booksSate(make(map[string]*booksSateQuotes))
+	bState := booksSate(make(map[string]*book))
 	for i, s := range symbols {
 		var br fullBookResponse
 		msg, err := http.Get(fmt.Sprintf(BinanceBooksUrlTmpl, s))
@@ -254,7 +264,8 @@ func (s *BinanceMiner) getFullBooksState(symbols []string) (booksSate, error) {
 			return nil, err
 		}
 		//todo: добавить обработку сообщений-ошибок
-		bStateQuotes := booksSateQuotes{
+		bStateQuotes := book{
+			symbol:   s,
 			secN:     br.SecN,
 			bids:     make(map[float64]float64),
 			asks:     make(map[float64]float64),
@@ -263,7 +274,7 @@ func (s *BinanceMiner) getFullBooksState(symbols []string) (booksSate, error) {
 		}
 		bStateQuotes.updatePrices(br.Bids, br.Asks)
 		bState[s] = &bStateQuotes
-		log.Println("got full book", i+1, "/", len(symbols))
+		log.Info("got full book", i+1, "/", len(symbols))
 	}
 	return bState, nil
 }
@@ -292,7 +303,7 @@ func (s *BinanceMiner) GetAllSymbols() ([]string, error) {
 	return result, nil
 }
 
-func convertToClickhouse(symbol string, book *booksSateQuotes, topSize int) *clickhouseStore.Book {
+func convertToClickhouse(book *book, topSize int) *clickhouseStore.Book {
 	askPrices := book.topAsks(topSize)
 	bidPrices := book.topBids(topSize)
 
@@ -307,7 +318,7 @@ func convertToClickhouse(symbol string, book *booksSateQuotes, topSize int) *cli
 	return &clickhouseStore.Book{
 		Source:        SourceKey,
 		Time:          book.time,
-		Symbol:        symbol,
+		Symbol:        book.symbol,
 		SecN:          book.secN,
 		BidPrices:     bidPrices,
 		AskPrices:     askPrices,
