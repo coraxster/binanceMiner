@@ -2,6 +2,7 @@ package clickhouseStore
 
 import (
 	"github.com/pkg/errors"
+	"runtime"
 	"time"
 )
 
@@ -67,6 +68,7 @@ func (rec *Receiver) Receive(ch chan *Book) error {
 }
 
 func (rec *Receiver) Store(books []*Book) error {
+	defer runtime.GC()
 	err := rec.mainStore.Store(books)
 	if err != nil {
 		if fbErr := rec.fbStore.StoreToRetry(books); fbErr != nil {

@@ -15,7 +15,7 @@ import (
 var Version = "0.0.0" // go build -ldflags "-X main.Version=0.0.1"
 
 var chDsn = flag.String("clickhouse-dsn", "tcp://localhost:9000?username=default&compress=true", "clickhouse dsn")
-var connN = flag.Int("binance-conn-n", 1, "binance connections number")
+var connN = flag.Int("binance-conn-n", 2, "binance connections number")
 var chunkSize = flag.Int("chunk-size", 100000, "collect chunk-size then push to clickhouse, 100000 - about 30mb")
 var fallbackPath = flag.String("fallback-path", "/tmp/binanceMiner/", "a place to store failed books")
 var keepOkDays = flag.Int("keep-ok", 0, "how long keep sent books(days)")
@@ -23,6 +23,8 @@ var keepOkDays = flag.Int("keep-ok", 0, "how long keep sent books(days)")
 var log = logrus.New()
 
 func main() {
+	//defer profile.Start(profile.MemProfile).Stop()
+
 	log.Info("version: " + Version)
 	if sentryDSN := os.Getenv("SENTRY_DSN"); sentryDSN != "" {
 		sentryHook := sentry.NewHook(sentryDSN, logrus.PanicLevel, logrus.FatalLevel, logrus.ErrorLevel, logrus.WarnLevel)
@@ -46,10 +48,10 @@ func main() {
 	seed(booksCh)
 	log.Info("books seeder has been started")
 
-	uniqueClickBooksCh := unique(booksCh)
+	uniqueBooksCh := unique(booksCh)
 	go func() {
 		for {
-			err := rec.Receive(uniqueClickBooksCh)
+			err := rec.Receive(uniqueBooksCh)
 			log.Warn("receive error: " + err.Error())
 		}
 	}()
@@ -67,7 +69,7 @@ func fatalOnErr(err error, msg string) {
 }
 
 func seed(ch chan *clickhouseStore.Book) {
-	miner := NewBinanceMiner()
+	miner := NewBinanceMiner(20)
 	symbols, err := miner.GetAllSymbols()
 	fatalOnErr(err, "get symbols failed")
 	worker := func(workerId int) {
