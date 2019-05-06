@@ -28,19 +28,19 @@ type BinanceMiner struct {
 	topSize int
 }
 
-func NewBinanceMiner(topSize int, connN int) *BinanceMiner {
+func NewBinanceMiner(connN int, topSize int) *BinanceMiner {
 	return &BinanceMiner{connN: connN, topSize: topSize}
 }
 
 func (s *BinanceMiner) SeedBooks(ch chan *clickhouseStore.Book, symbols []string) error {
 	ctx, cancelSeed := context.WithCancel(context.Background())
 	defer cancelSeed()
-	updatesCh := make(chan *streamResponseData, 1000)
+	updatesCh := make(chan *bookUpdate, 1000)
 	go func() {
-		s.multiSeed(ctx, updatesCh, symbols)
+		s.multiSeedUpdates(ctx, updatesCh, symbols)
 		close(updatesCh)
 	}()
-	time.Sleep(5 * time.Second)
+	time.Sleep(10 * time.Second)
 	bState, err := s.getFullBooksState(symbols)
 	if err != nil {
 		return err
@@ -65,13 +65,14 @@ func (s *BinanceMiner) SeedBooks(ch chan *clickhouseStore.Book, symbols []string
 	return errors.New("unexpected updatesCh close")
 }
 
-func (s *BinanceMiner) multiSeed(ctx context.Context, updatesCh chan *streamResponseData, symbols []string) {
+func (s *BinanceMiner) multiSeedUpdates(ctx context.Context, updatesCh chan *bookUpdate, symbols []string) {
 	wg := sync.WaitGroup{}
 	worker := func(workerId int) {
 		defer wg.Done()
 		for {
-			err := s.seedTimingOut(ctx, updatesCh, symbols)
-			log.Warn(workerId, ": ", err)
+			if err := s.seedUpdatesTimingOut(ctx, updatesCh, symbols); err != nil {
+				log.Warn(workerId, ": ", err)
+			}
 			select {
 			case <-ctx.Done():
 				return
@@ -86,14 +87,18 @@ func (s *BinanceMiner) multiSeed(ctx context.Context, updatesCh chan *streamResp
 	wg.Wait()
 }
 
-func (s *BinanceMiner) seedTimingOut(ctx context.Context, updatesCh chan *streamResponseData, symbols []string) error {
+func (s *BinanceMiner) seedUpdatesTimingOut(ctx context.Context, updatesCh chan *bookUpdate, symbols []string) error {
+	wg := sync.WaitGroup{}
+	defer wg.Wait()
 	ctx, cancelSeed := context.WithCancel(ctx)
 	defer cancelSeed()
 	for {
 		workerErrCh := make(chan error)
 		workerCtx, _ := context.WithTimeout(ctx, StreamTimelimit)
 		go func() {
-			workerErrCh <- s.seed(workerCtx, updatesCh, symbols)
+			wg.Add(1)
+			workerErrCh <- s.seedUpdates(workerCtx, updatesCh, symbols)
+			wg.Done()
 			close(workerErrCh)
 		}()
 		select {
@@ -108,9 +113,9 @@ func (s *BinanceMiner) seedTimingOut(ctx context.Context, updatesCh chan *stream
 }
 
 type streamResponse struct {
-	Data streamResponseData
+	Data bookUpdate
 }
-type streamResponseData struct {
+type bookUpdate struct {
 	Event     string        `json:"e"`
 	Ts        int           `json:"E"`
 	Symbol    string        `json:"s"`
@@ -142,26 +147,22 @@ func (c *binanceQuotes) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func (s *BinanceMiner) seed(ctx context.Context, ch chan *streamResponseData, symbols []string) error {
+func (s *BinanceMiner) seedUpdates(ctx context.Context, ch chan *bookUpdate, symbols []string) error {
 	query := "streams="
 	for _, s := range symbols {
 		query = query + strings.ToLower(s) + StreamSuffix + "/"
 	}
 	u := url.URL{Scheme: "wss", Host: BinanceUpdatesHost, Path: "/stream", RawQuery: query}
-	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	c, _, err := websocket.DefaultDialer.DialContext(ctx, u.String(), nil)
 	if err != nil {
 		return err
 	}
+	time.Sleep(5 * time.Second)
 	defer c.Close()
 	for {
 		var r streamResponse
 		if err := c.ReadJSON(&r); err != nil {
 			return err
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
 		}
 		select {
 		case <-ctx.Done():

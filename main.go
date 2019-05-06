@@ -40,14 +40,14 @@ func main() {
 	fatalOnErr(err, "NewReceiver failed")
 	log.Info("clickhouseStore Receiver has been started")
 
-	miner := NewBinanceMiner(20, *connN)
+	miner := NewBinanceMiner(*connN, 20)
 	booksCh := make(chan *clickhouseStore.Book)
 	symbols, err := miner.GetAllSymbols()
 	fatalOnErr(err, "get symbols failed")
 	go func() {
 		for {
 			err := miner.SeedBooks(booksCh, symbols)
-			log.Error("!!! seed error: ", err)
+			log.Error("!!! seedUpdates error: ", err)
 			time.Sleep(2 * time.Second)
 		}
 	}()
