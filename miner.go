@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -62,7 +63,7 @@ func (s *BinanceMiner) SeedBooks(ch chan *clickhouseStore.Book, symbols []string
 		case bUpdate := <-updatesCh:
 			updatingBook, ok := bState[bUpdate.Symbol]
 			if !ok {
-				fmt.Println("symbol not found in booksState: ", bUpdate.Symbol)
+				log.Warn("symbol not found in booksState: ", bUpdate.Symbol)
 				continue
 			}
 			if bUpdate.FirstSecN > updatingBook.secN+1 {
@@ -82,15 +83,17 @@ func (s *BinanceMiner) SeedBooks(ch chan *clickhouseStore.Book, symbols []string
 }
 
 func (s *BinanceMiner) seedTimingOut(ctx context.Context, updatesCh chan *streamResponseData, symbols []string) error {
-	query := "streams="
-	for _, s := range symbols {
-		query = query + strings.ToLower(s) + StreamSuffix + "/"
-	}
+	wg := sync.WaitGroup{}
+	defer wg.Wait()
+	ctx, cancelSeed := context.WithCancel(ctx)
+	defer cancelSeed()
 	for {
 		workerErrCh := make(chan error)
 		ctx, _ := context.WithTimeout(ctx, StreamTimelimit)
 		go func() {
-			workerErrCh <- s.seed(ctx, updatesCh, query)
+			wg.Add(1)
+			workerErrCh <- s.seed(ctx, updatesCh, symbols)
+			wg.Done()
 			close(workerErrCh)
 		}()
 		select {
@@ -139,12 +142,17 @@ func (c *binanceQuotes) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func (s *BinanceMiner) seed(ctx context.Context, ch chan *streamResponseData, query string) error {
+func (s *BinanceMiner) seed(ctx context.Context, ch chan *streamResponseData, symbols []string) error {
+	query := "streams="
+	for _, s := range symbols {
+		query = query + strings.ToLower(s) + StreamSuffix + "/"
+	}
 	u := url.URL{Scheme: "wss", Host: BinanceUpdatesHost, Path: "/stream", RawQuery: query}
-	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	c, _, err := websocket.DefaultDialer.DialContext(ctx, u.String(), nil)
 	if err != nil {
 		return err
 	}
+	time.Sleep(10 * time.Second) // new connection may seed up-front books
 	atomic.AddInt32(&s.aliveCount, 1)
 	defer c.Close()
 	defer atomic.AddInt32(&s.aliveCount, -1)
@@ -154,11 +162,10 @@ func (s *BinanceMiner) seed(ctx context.Context, ch chan *streamResponseData, qu
 		if err := c.ReadJSON(&r); err != nil {
 			return err
 		}
-		ch <- &r.Data
 		select {
 		case <-ctx.Done():
 			return nil
-		default:
+		case ch <- &r.Data:
 		}
 	}
 }
