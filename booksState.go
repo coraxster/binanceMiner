@@ -54,7 +54,7 @@ func (sq *book) topAsks(n int) [][2]float64 {
 	return top
 }
 
-func (sq *book) updatePrices(bids binanceQuotes, asks binanceQuotes) {
+func (sq *book) updateBids(bids binanceQuotes) {
 	for _, q := range bids {
 		if q[1] == 0 {
 			sq.bids.Remove(q[0])
@@ -62,6 +62,9 @@ func (sq *book) updatePrices(bids binanceQuotes, asks binanceQuotes) {
 		}
 		sq.bids.Put(q[0], q[1])
 	}
+}
+
+func (sq *book) updateAsks(asks binanceQuotes) {
 	for _, q := range asks {
 		if q[1] == 0 {
 			sq.asks.Remove(q[0])

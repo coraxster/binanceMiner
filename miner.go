@@ -59,7 +59,8 @@ func (s *BinanceMiner) SeedBooks(booksCh chan *clickhouseStore.Book, symbols []s
 		}
 		updatingBook.secN = bUpdate.LastSecN
 		updatingBook.time = time.Unix(int64(bUpdate.Ts)/1000, int64(bUpdate.Ts)%1000*1000000)
-		updatingBook.updatePrices(bUpdate.Bids, bUpdate.Asks)
+		updatingBook.updateBids(bUpdate.Bids)
+		updatingBook.updateAsks(bUpdate.Asks)
 		booksCh <- convertToClickhouse(updatingBook, s.topSize)
 	}
 	return errors.New("unexpected updatesCh close")
@@ -157,8 +158,8 @@ func (s *BinanceMiner) seedUpdates(ctx context.Context, ch chan *bookUpdate, sym
 	if err != nil {
 		return err
 	}
-	time.Sleep(5 * time.Second)
 	defer c.Close()
+	time.Sleep(5 * time.Second) // new worker should seed first update with some delay
 	for {
 		var r streamResponse
 		if err := c.ReadJSON(&r); err != nil {
@@ -169,21 +170,20 @@ func (s *BinanceMiner) seedUpdates(ctx context.Context, ch chan *bookUpdate, sym
 			return nil
 		case ch <- &r.Data:
 		}
-
 	}
 }
 
 type fullBookResponse struct {
-	symbol string
-	SecN   int           `json:"lastUpdateId"`
-	Bids   binanceQuotes `json:"bids"`
-	Asks   binanceQuotes `json:"asks"`
+	ErrorMsg string        `json:"msg"`
+	SecN     int           `json:"lastUpdateId"`
+	Bids     binanceQuotes `json:"bids"`
+	Asks     binanceQuotes `json:"asks"`
 }
 
 func (s *BinanceMiner) getFullBooksState(symbols []string) (booksSate, error) {
 	bState := booksSate(make(map[string]*book))
-	for i, s := range symbols {
-		var br fullBookResponse
+	var br fullBookResponse
+	for _, s := range symbols {
 		msg, err := http.Get(fmt.Sprintf(BinanceBooksUrlTmpl, s))
 		if err != nil {
 			return nil, err
@@ -192,16 +192,19 @@ func (s *BinanceMiner) getFullBooksState(symbols []string) (booksSate, error) {
 		if err != nil {
 			return nil, err
 		}
-		//todo: добавить обработку сообщений-ошибок
+		if br.ErrorMsg != "" {
+			return nil, errors.New(br.ErrorMsg)
+		}
 		b := &book{
 			secN: br.SecN,
 			bids: treemap.NewWith(treeComparator),
 			asks: treemap.NewWith(treeComparator),
 		}
-		b.updatePrices(br.Bids, br.Asks)
+		b.updateBids(br.Bids)
+		b.updateAsks(br.Asks)
 		bState[s] = b
-		log.Println("got full book", i+1, "/", len(symbols))
 	}
+	log.Println("got full books: ", len(bState))
 	return bState, nil
 }
 
