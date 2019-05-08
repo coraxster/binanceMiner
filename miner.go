@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/coraxster/binanceMiner/clickhouseStore"
-	"github.com/emirpasic/gods/sets/treeset"
+	"github.com/emirpasic/gods/maps/treemap"
 	"github.com/gorilla/websocket"
 	"io/ioutil"
 	"net/http"
@@ -39,6 +39,7 @@ func (s *BinanceMiner) AliveCount() int {
 
 func (s *BinanceMiner) SeedBooks(ch chan *clickhouseStore.Book, symbols []string) error {
 	ctx, cancelSeed := context.WithCancel(context.Background())
+	defer cancelSeed()
 	seedErrCh := make(chan error)
 	updatesCh := make(chan *streamResponseData, 1000)
 	go func() {
@@ -53,7 +54,6 @@ func (s *BinanceMiner) SeedBooks(ch chan *clickhouseStore.Book, symbols []string
 	}
 	bState, err := s.getFullBooksState(symbols)
 	if err != nil {
-		cancelSeed()
 		return err
 	}
 	for {
@@ -173,12 +173,10 @@ func (s *BinanceMiner) seed(ctx context.Context, ch chan *streamResponseData, sy
 type booksSate map[string]*booksSateQuotes
 
 type booksSateQuotes struct {
-	secN     int
-	time     time.Time
-	bids     map[float64]float64
-	asks     map[float64]float64
-	bidsTree *treeset.Set
-	asksTree *treeset.Set
+	secN int
+	time time.Time
+	bids *treemap.Map
+	asks *treemap.Map
 }
 
 func treeComparator(a, b interface{}) int {
@@ -193,13 +191,13 @@ func treeComparator(a, b interface{}) int {
 	return 0
 }
 
-func (sq *booksSateQuotes) topBids(n int) []float64 {
-	top := make([]float64, 0, 20)
-	it := sq.bidsTree.Iterator()
+func (sq *booksSateQuotes) topBids(n int) [][2]float64 {
+	top := make([][2]float64, 0, n)
+	it := sq.bids.Iterator()
 	it.End()
 	i := 0
 	for it.Prev() {
-		top = append(top, it.Value().(float64))
+		top = append(top, [2]float64{it.Key().(float64), it.Value().(float64)})
 		if i++; i == n {
 			return top
 		}
@@ -207,12 +205,12 @@ func (sq *booksSateQuotes) topBids(n int) []float64 {
 	return top
 }
 
-func (sq *booksSateQuotes) topAsks(n int) []float64 {
-	top := make([]float64, 0, 20)
-	it := sq.asksTree.Iterator()
+func (sq *booksSateQuotes) topAsks(n int) [][2]float64 {
+	top := make([][2]float64, 0, n)
+	it := sq.asks.Iterator()
 	i := 0
 	for it.Next() {
-		top = append(top, it.Value().(float64))
+		top = append(top, [2]float64{it.Key().(float64), it.Value().(float64)})
 		if i++; i == n {
 			return top
 		}
@@ -223,21 +221,17 @@ func (sq *booksSateQuotes) topAsks(n int) []float64 {
 func (sq *booksSateQuotes) updatePrices(bids binanceQuotes, asks binanceQuotes) {
 	for _, q := range bids {
 		if q[1] == 0 {
-			sq.bidsTree.Remove(q[0])
-			delete(sq.bids, q[0])
+			sq.bids.Remove(q[0])
 			continue
 		}
-		sq.bidsTree.Add(q[0])
-		sq.bids[q[0]] = q[1]
+		sq.bids.Put(q[0], q[1])
 	}
 	for _, q := range asks {
 		if q[1] == 0 {
-			sq.asksTree.Remove(q[0])
-			delete(sq.asks, q[0])
+			sq.asks.Remove(q[0])
 			continue
 		}
-		sq.asksTree.Add(q[0])
-		sq.asks[q[0]] = q[1]
+		sq.asks.Put(q[0], q[1])
 	}
 }
 
@@ -262,11 +256,9 @@ func (s *BinanceMiner) getFullBooksState(symbols []string) (booksSate, error) {
 		}
 		//todo: добавить обработку сообщений-ошибок
 		bStateQuotes := booksSateQuotes{
-			secN:     br.SecN,
-			bids:     make(map[float64]float64),
-			asks:     make(map[float64]float64),
-			bidsTree: treeset.NewWith(treeComparator),
-			asksTree: treeset.NewWith(treeComparator),
+			secN: br.SecN,
+			bids: treemap.NewWith(treeComparator),
+			asks: treemap.NewWith(treeComparator),
 		}
 		bStateQuotes.updatePrices(br.Bids, br.Asks)
 		bState[s] = &bStateQuotes
@@ -300,16 +292,17 @@ func (s *BinanceMiner) GetAllSymbols() ([]string, error) {
 }
 
 func convertToClickhouse(symbol string, book *booksSateQuotes, topSize int) *clickhouseStore.Book {
-	askPrices := book.topAsks(topSize)
-	bidPrices := book.topBids(topSize)
-
-	askQuantities := make([]float64, 0, len(askPrices))
-	for _, price := range askPrices {
-		askQuantities = append(askQuantities, book.asks[price])
+	askPrices := make([]float64, 0, topSize)
+	askQuantities := make([]float64, 0, topSize)
+	for _, q := range book.topAsks(topSize) {
+		askPrices = append(askPrices, q[0])
+		askQuantities = append(askQuantities, q[1])
 	}
-	bidQuantities := make([]float64, 0, len(askPrices))
-	for _, price := range bidPrices {
-		bidQuantities = append(bidQuantities, book.bids[price])
+	bidPrices := make([]float64, 0, topSize)
+	bidQuantities := make([]float64, 0, topSize)
+	for _, q := range book.topBids(topSize) {
+		bidPrices = append(bidPrices, q[0])
+		bidQuantities = append(bidQuantities, q[1])
 	}
 	return &clickhouseStore.Book{
 		Source:        SourceKey,
