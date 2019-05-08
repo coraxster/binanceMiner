@@ -44,7 +44,6 @@ func NewReceiver(config ReceiverConfig) (*Receiver, error) {
 	if err = chStore.Migrate(); err != nil {
 		return nil, errors.Wrap(err, "ClickHouseStore migrate failed")
 	}
-
 	fbStore, err := NewLocalStore(config.FallbackPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "NewLocalStore failed")
